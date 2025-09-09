@@ -2,12 +2,8 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import ClimaDashboard from "./componentes/ClimaDashboard";
 import OpalDetalles from "./componentes/OPALRT_Detalle";
-import tempDetalles from "./componentes/TempDetalles";
-import humDetalles from "./componentes/HumDetalles.jsx";
-import presDetalles from "./componentes/PresDetalles";
-import vvDetalles from "./componentes/VvDetalles";
-import dvDetalles from "./componentes/DvDetalles";
-import uvDetalles from "./componentes/UvDetalles";
+import ParametroDetalles from "./componentes/ParametroDetalles";
+
 
 function App() {
   return (
@@ -15,16 +11,69 @@ function App() {
       <Routes>
         <Route path="/clima" element={<ClimaDashboard />} />
         <Route path="/OPALRT_Detalle" element={<OpalDetalles />} />
-        <Route path="/detalles/temperatura" element={<tempDetalles />} />
-        <Route path="/detalles/humedad" element={<humDetalles />} />
-        <Route path="/detalles/presion" element={<presDetalles />} />
-        <Route path="/detalles/v_viento" element={<vvDetalles />} />
-        <Route path="/detalles/d_viento" element={<dvDetalles />} />
-        <Route path="/detalles/indiceuv" element={<uvDetalles />} />
+        {/* Rutas para cada parámetro meteorológico */}
+          <Route 
+            path="/temperatura" 
+            element={
+              <ParametroDetalles 
+                parametro="temperatura" 
+                title="Análisis Detallado de Temperatura" 
+              />
+            } 
+          />
+          
+          <Route 
+            path="/humedad" 
+            element={
+              <ParametroDetalles 
+                parametro="humedad" 
+                title="Análisis Detallado de Humedad" 
+              />
+            } 
+          />
+          
+          <Route 
+            path="/presion" 
+            element={
+              <ParametroDetalles 
+                parametro="presion" 
+                title="Análisis Detallado de Presión Atmosférica" 
+              />
+            } 
+          />
+          
+          <Route 
+            path="/v_viento" 
+            element={
+              <ParametroDetalles 
+                parametro="v_viento" 
+                title="Análisis Detallado de Velocidad del Viento" 
+              />
+            } 
+          />
+          
+          <Route 
+            path="/d_viento" 
+            element={
+              <ParametroDetalles 
+                parametro="d_viento" 
+                title="Análisis Detallado de Dirección del Viento" 
+              />
+            } 
+          />
+       
+          <Route 
+            path="/indiceuv" 
+            element={
+              <ParametroDetalles 
+                parametro="indiceuv" 
+                title="Análisis Detallado de Índice UV" 
+              />
+            } 
+          />
         <Route path="*" element={<ClimaDashboard />} />
       </Routes>
     </Router>
   );
 }
-
 export default App;

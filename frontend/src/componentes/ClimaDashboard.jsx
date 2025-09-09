@@ -68,7 +68,7 @@ export default function DashboardClima() {
 
   const handleCardClick = (chartKey) => {
     // Navegar a una vista de detalles según la métrica seleccionada
-    navigate(`/detalles/${chartKey}`, { 
+    navigate(`/${chartKey}`, { 
       state: { 
         data: allData,
         metric: chartKey
