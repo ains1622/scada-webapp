@@ -14,12 +14,12 @@ export const runConsumer = async (io) => {
     console.log("✅ Consumer Kafka conectado");
 
     await consumer.subscribe({ topic: "clima-data", fromBeginning: true });
-    console.log("📩 Suscrito al topic 'clima-data'");
+    console.log("Suscrito al topic 'clima-data'");
 
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
         const data = JSON.parse(message.value.toString());
-        console.log("📡 Kafka -> recibido:", data);
+        //console.log("📡 Kafka -> recibido:", data);
 
         try {
           const query = `
@@ -37,14 +37,13 @@ export const runConsumer = async (io) => {
           ];
           await pool.query(query, values);
         } catch (err) {
-          console.error("❌ Error insertando en DB:", err);
+          console.error("Error insertando en DB:", err);
         }
-
-        // Enviar a todos los clientes WS
         io.emit("clima_update", data);
+        //console.log("📡 Kafka -> WS:", data);
       },
     });
   } catch (err) {
-    console.error("❌ Error iniciando el consumer:", err);
+    console.error("Error iniciando el consumer:", err);
   }
 };

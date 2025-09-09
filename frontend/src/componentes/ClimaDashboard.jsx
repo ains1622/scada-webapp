@@ -13,13 +13,13 @@ import { io } from "socket.io-client";
 export default function DashboardClima() {
   const [data, setData] = useState([]);
   const [allData, setAllData] = useState([]);
+  const [opalData, setOpalData] = useState([]); // datos para OPAL-RT
+  const [dtData, setDtData] = useState([]); // datos para DT
   const MAX_POINTS = 10; // máximo de puntos visibles
 
   useEffect(() => {
     // conectar socket
-    const socket = io("http://localhost:4000", {
-      transports: ["websocket"],
-    });
+    const socket = io("http://172.20.0.137:4000");
 
     socket.on("connect", () => {
       console.log("Conectado a WebSocket del servidor");
@@ -39,6 +39,23 @@ export default function DashboardClima() {
 
       // acumular todos los datos históricos en memoria
       setAllData((prev) => [...prev, registro]);
+    });
+
+    socket.on("opal_update", (registro) => {
+      setOpalData(prev => {
+        const updated = [...prev, registro];
+        if (updated.length > MAX_POINTS) updated.shift();
+        return updated;
+      });
+    });
+
+    // Datos de DT
+    socket.on("dt_update", (registro) => {
+      setDtData(prev => {
+        const updated = [...prev, registro];
+        if (updated.length > MAX_POINTS) updated.shift();
+        return updated;
+      });
     });
 
     // limpieza al desmontar el componente
@@ -343,7 +360,37 @@ export default function DashboardClima() {
           <span style={styles.liveText}>En vivo</span>
         </div>
       </div>
+      {/* Nueva fila: OPAL-RT y DT */}
+      <div style={{ ...styles.grid, justifyContent: "center", marginTop: "2rem" }}>
+        
+        {/* OPAL-RT */}
+        <div style={styles.card} className="dashboard-card">
+          <h3 style={styles.cardTitle}>OPAL-RT</h3>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={opalData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+              <XAxis dataKey="timestamp" tick={{ fontSize: 12, fill: '#cbd5e1' }} />
+              <YAxis tick={{ fontSize: 12, fill: '#cbd5e1' }} />
+              <Tooltip />
+              <Line type="monotone" dataKey="valor" stroke="#6b73ff" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
 
+        {/* DT */}
+        <div style={{ ...styles.card, marginLeft: "1rem" }} className="dashboard-card">
+          <h3 style={styles.cardTitle}>DT</h3>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={dtData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+              <XAxis dataKey="timestamp" tick={{ fontSize: 12, fill: '#cbd5e1' }} />
+              <YAxis tick={{ fontSize: 12, fill: '#cbd5e1' }} />
+              <Tooltip />
+              <Line type="monotone" dataKey="valor" stroke="#ff6b6b" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
       {/* Dashboard Grid */}
       <div style={styles.grid} className="dashboard-grid">
         {charts.map((chart, index) => (

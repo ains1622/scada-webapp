@@ -3,7 +3,7 @@
 -- Crear tabla clima
 CREATE TABLE clima (
     id SERIAL PRIMARY KEY,
-    temperatura REAL NOT NULL,
+    temperatura REAL,
     humedad REAL,
     presion REAL,
     v_viento NUMERIC(5,2),
