@@ -4,8 +4,8 @@ import { testConexion, getData } from "./src/db.js";
 import cors from "cors";
 import { Server } from "socket.io";
 import http from "http";
-import { sendApiDataToKafka } from "./src/kafka/producer.js";
-import { runConsumer } from "./src/kafka/consumer.js";
+import { sendApiDataToKafka } from "./src/kafka/producerClima.js";
+import { runConsumer } from "./src/kafka/consumerClima.js";
 
 dotenv.config();
 

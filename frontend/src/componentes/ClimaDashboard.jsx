@@ -9,13 +9,15 @@ import {
   ResponsiveContainer
 } from "recharts";
 import { io } from "socket.io-client";
+import { useNavigate } from 'react-router-dom';
 
 export default function DashboardClima() {
-  const [data, setData] = useState([]);
-  const [allData, setAllData] = useState([]);
+  const [data, setData] = useState([]); // dato más reciente del clima
+  const [allData, setAllData] = useState([]); // todos los datos del clima
   const [opalData, setOpalData] = useState([]); // datos para OPAL-RT
   const [dtData, setDtData] = useState([]); // datos para DT
   const MAX_POINTS = 10; // máximo de puntos visibles
+  const navigate = useNavigate();
 
   useEffect(() => {
     // conectar socket
@@ -63,6 +65,35 @@ export default function DashboardClima() {
       socket.disconnect();
     };
   }, []);
+
+  const handleCardClick = (chartKey) => {
+    // Navegar a una vista de detalles según la métrica seleccionada
+    navigate(`/detalles/${chartKey}`, { 
+      state: { 
+        data: allData,
+        metric: chartKey
+      } 
+    });
+  };
+  // Función para manejar clic en OPAL-RT
+  const handleOpalClick = () => {
+    navigate('/OPALRT_Detalle', { 
+      state: { 
+        opalData: opalData,
+        title: "Detalles de OPAL-RT"
+      } 
+    });
+  };
+
+  // Función para manejar clic en DT
+  const handleDtClick = () => {
+    navigate('/DT_Detalle', { 
+      state: { 
+        dtData: dtData,
+        title: "Detalles de Digital Twin"
+      } 
+    });
+  };
 
   const charts = [
     { 
@@ -211,6 +242,13 @@ export default function DashboardClima() {
       maxWidth: '1400px',
       margin: '0 auto'
     },
+    systemGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))',
+      gap: '24px',
+      maxWidth: '1400px',
+      margin: '0 auto 3rem auto'
+    },
     card: {
       position: 'relative',
       overflow: 'hidden',
@@ -220,6 +258,17 @@ export default function DashboardClima() {
       border: '1px solid rgba(255, 255, 255, 0.2)',
       transition: 'all 0.3s ease',
       cursor: 'pointer'
+    },
+    systemCard: {
+      position: 'relative',
+      overflow: 'hidden',
+      borderRadius: '24px',
+      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+      backdropFilter: 'blur(10px)',
+      border: '1px solid rgba(255, 255, 255, 0.2)',
+      transition: 'all 0.3s ease',
+      cursor: 'pointer',
+      padding: '24px'
     },
     cardContent: {
       position: 'relative',
@@ -231,6 +280,12 @@ export default function DashboardClima() {
       alignItems: 'center',
       justifyContent: 'space-between',
       marginBottom: '16px'
+    },
+    systemHeader: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px',
+      marginBottom: '20px'
     },
     cardLeft: {
       display: 'flex',
@@ -247,11 +302,32 @@ export default function DashboardClima() {
       fontSize: '20px',
       boxShadow: '0 8px 25px rgba(0, 0, 0, 0.15)'
     },
+    systemIcon: {
+      width: '56px',
+      height: '56px',
+      borderRadius: '18px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: '24px',
+      boxShadow: '0 12px 30px rgba(0, 0, 0, 0.2)'
+    },
     cardTitle: {
       color: 'white',
       fontSize: '18px',
       fontWeight: '600',
       margin: 0
+    },
+    systemTitle: {
+      color: 'white',
+      fontSize: '24px',
+      fontWeight: '700',
+      margin: 0
+    },
+    systemSubtitle: {
+      color: '#cbd5e1',
+      fontSize: '14px',
+      margin: '4px 0 0 0'
     },
     currentValue: {
       textAlign: 'right'
@@ -272,6 +348,13 @@ export default function DashboardClima() {
       borderRadius: '16px',
       padding: '16px',
       backdropFilter: 'blur(5px)'
+    },
+    systemChartContainer: {
+      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+      borderRadius: '20px',
+      padding: '20px',
+      backdropFilter: 'blur(5px)',
+      border: '1px solid rgba(255, 255, 255, 0.1)'
     },
     cardFooter: {
       display: 'flex',
@@ -330,6 +413,8 @@ export default function DashboardClima() {
         .dashboard-card:nth-child(4) { animation-delay: 300ms; }
         .dashboard-card:nth-child(5) { animation-delay: 400ms; }
         .dashboard-card:nth-child(6) { animation-delay: 500ms; }
+        .dashboard-card:nth-child(7) { animation-delay: 600ms; }
+        .dashboard-card:nth-child(8) { animation-delay: 700ms; }
         
         @media (max-width: 768px) {
           .dashboard-grid {
@@ -350,47 +435,169 @@ export default function DashboardClima() {
       {/* Header */}
       <div style={styles.header}>
         <h1 style={styles.title}>
-          Dashboard Climático
+          SCADA Dashboard
         </h1>
         <p style={styles.subtitle}>
-          Monitoreo en tiempo real• Ventana deslizante
+          Monitoreo en tiempo real
         </p>
         <div style={styles.liveIndicator}>
           <div style={styles.liveDot}></div>
           <span style={styles.liveText}>En vivo</span>
         </div>
       </div>
+
       {/* Nueva fila: OPAL-RT y DT */}
-      <div style={{ ...styles.grid, justifyContent: "center", marginTop: "2rem" }}>
+      <div style={styles.systemGrid}>
         
         {/* OPAL-RT */}
-        <div style={styles.card} className="dashboard-card">
-          <h3 style={styles.cardTitle}>OPAL-RT</h3>
-          <ResponsiveContainer width="100%" height={150}>
-            <LineChart data={opalData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis dataKey="timestamp" tick={{ fontSize: 12, fill: '#cbd5e1' }} />
-              <YAxis tick={{ fontSize: 12, fill: '#cbd5e1' }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="valor" stroke="#6b73ff" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div style={styles.systemCard} className="dashboard-card"
+        onClick={handleOpalClick}>
+          {/* Gradient overlay para OPAL-RT */}
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+            opacity: 0.05
+          }}></div>
+          
+          <div style={{ position: 'relative', zIndex: 2 }}>
+            {/* Header de OPAL-RT */}
+            <div style={styles.systemHeader}>
+              <div style={{
+                ...styles.systemIcon,
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+              }}>
+                🖥️
+              </div>
+              <div>
+                <h3 style={styles.systemTitle}>OPAL-RT</h3>
+                <p style={styles.systemSubtitle}>Sistema de simulación en tiempo real</p>
+              </div>
+            </div>
+
+            {/* Gráfico de OPAL-RT */}
+            <div style={styles.systemChartContainer}>
+              <ResponsiveContainer width="100%" height={350}>
+                <LineChart data={opalData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis 
+                    dataKey="timestamp" 
+                    tick={{ fontSize: 12, fill: '#cbd5e1' }}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                    tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 12, fill: '#cbd5e1' }}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                    tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                  />
+                  <Tooltip content={customTooltip} />
+                  <Line 
+                    type="monotone" 
+                    dataKey="valor" 
+                    stroke="#6b73ff" 
+                    strokeWidth={3} 
+                    dot={{ fill: '#6b73ff', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, fill: '#6b73ff', strokeWidth: 2, stroke: '#fff' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Footer de OPAL-RT */}
+            <div style={styles.cardFooter}>
+              <span style={styles.footerLeft}>
+                Últimos {Math.min(opalData.length, 10)} puntos
+              </span>
+              <div style={styles.footerRight}>
+                <div style={{
+                  ...styles.statusDot,
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                }}></div>
+                <span style={styles.footerLeft}>Sistema activo</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* DT */}
-        <div style={{ ...styles.card, marginLeft: "1rem" }} className="dashboard-card">
-          <h3 style={styles.cardTitle}>DT</h3>
-          <ResponsiveContainer width="100%" height={150}>
-            <LineChart data={dtData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis dataKey="timestamp" tick={{ fontSize: 12, fill: '#cbd5e1' }} />
-              <YAxis tick={{ fontSize: 12, fill: '#cbd5e1' }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="valor" stroke="#ff6b6b" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div style={styles.systemCard} className="dashboard-card"
+        onClick={handleDtClick}>
+          {/* Gradient overlay para DT */}
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'linear-gradient(135deg, #ef4444, #f97316)',
+            opacity: 0.05
+          }}></div>
+          
+          <div style={{ position: 'relative', zIndex: 2 }}>
+            {/* Header de DT */}
+            <div style={styles.systemHeader}>
+              <div style={{
+                ...styles.systemIcon,
+                background: 'linear-gradient(135deg, #ef4444, #f97316)'
+              }}>
+                🔗
+              </div>
+              <div>
+                <h3 style={styles.systemTitle}>DT</h3>
+                <p style={styles.systemSubtitle}>Digital Twin en tiempo real</p>
+              </div>
+            </div>
+
+            {/* Gráfico de DT */}
+            <div style={styles.systemChartContainer}>
+              <ResponsiveContainer width="100%" height={350}>
+                <LineChart data={dtData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis 
+                    dataKey="timestamp" 
+                    tick={{ fontSize: 12, fill: '#cbd5e1' }}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                    tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 12, fill: '#cbd5e1' }}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                    tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                  />
+                  <Tooltip content={customTooltip} />
+                  <Line 
+                    type="monotone" 
+                    dataKey="valor" 
+                    stroke="#ff6b6b" 
+                    strokeWidth={3}
+                    dot={{ fill: '#ff6b6b', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, fill: '#ff6b6b', strokeWidth: 2, stroke: '#fff' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Footer de DT */}
+            <div style={styles.cardFooter}>
+              <span style={styles.footerLeft}>
+                Últimos {Math.min(dtData.length, 10)} puntos
+              </span>
+              <div style={styles.footerRight}>
+                <div style={{
+                  ...styles.statusDot,
+                  background: 'linear-gradient(135deg, #ef4444, #f97316)'
+                }}></div>
+                <span style={styles.footerLeft}>Sincronizado</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+
       {/* Dashboard Grid */}
       <div style={styles.grid} className="dashboard-grid">
         {charts.map((chart, index) => (
@@ -398,6 +605,7 @@ export default function DashboardClima() {
             key={chart.key}
             style={styles.card}
             className="dashboard-card"
+            onClick={() => handleCardClick(chart.key)}
           >
             {/* Gradient overlay */}
             <div style={{

@@ -11,7 +11,7 @@ const consumer = kafka.consumer({ groupId: "scada-group" });
 export const runConsumer = async (io) => {
   try {
     await consumer.connect();
-    console.log("✅ Consumer Kafka conectado");
+    console.log("Consumer Kafka conectado");
 
     await consumer.subscribe({ topic: "clima-data", fromBeginning: true });
     console.log("Suscrito al topic 'clima-data'");
@@ -20,7 +20,6 @@ export const runConsumer = async (io) => {
       eachMessage: async ({ topic, partition, message }) => {
         const data = JSON.parse(message.value.toString());
         //console.log("📡 Kafka -> recibido:", data);
-
         try {
           const query = `
             INSERT INTO clima (temperatura, humedad, presion, v_viento, d_viento, indiceuv, timestamp)
