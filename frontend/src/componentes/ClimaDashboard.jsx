@@ -16,6 +16,7 @@ export default function DashboardClima() {
   const [allData, setAllData] = useState([]); // todos los datos del clima
   const [opalData, setOpalData] = useState([]); // datos para OPAL-RT
   const [dtData, setDtData] = useState([]); // datos para DT
+  const [opalChartMode, setOpalChartMode] = useState('potencia-tiempo'); // modo del gráfico OPAL-RT
   const MAX_POINTS = 10; // máximo de puntos visibles
   const navigate = useNavigate();
 
@@ -75,6 +76,7 @@ export default function DashboardClima() {
       } 
     });
   };
+  
   // Función para manejar clic en OPAL-RT
   const handleOpalClick = () => {
     navigate('/OPALRT_Detalle', { 
@@ -93,6 +95,48 @@ export default function DashboardClima() {
         title: "Detalles de Digital Twin"
       } 
     });
+  };
+
+  // Función para obtener configuración del gráfico OPAL-RT según el modo
+  const getOpalChartConfig = () => {
+    switch(opalChartMode) {
+      case 'potencia-tiempo':
+        return {
+          xKey: 'timestamp',
+          yKey: 'potencia',
+          xLabel: 'Tiempo',
+          yLabel: 'Potencia (W)',
+          color: '#6b73ff',
+          title: 'Potencia vs Tiempo'
+        };
+      case 'corriente-voltaje':
+        return {
+          xKey: 'voltaje',
+          yKey: 'corriente',
+          xLabel: 'Voltaje (V)',
+          yLabel: 'Corriente (A)',
+          color: '#22c55e',
+          title: 'Corriente vs Voltaje'
+        };
+      case 'potencia-voltaje':
+        return {
+          xKey: 'voltaje',
+          yKey: 'potencia',
+          xLabel: 'Voltaje (V)',
+          yLabel: 'Potencia (W)',
+          color: '#f59e0b',
+          title: 'Potencia vs Voltaje'
+        };
+      default:
+        return {
+          xKey: 'timestamp',
+          yKey: 'potencia',
+          xLabel: 'Tiempo',
+          yLabel: 'Potencia (W)',
+          color: '#6b73ff',
+          title: 'Potencia vs Tiempo'
+        };
+    }
   };
 
   const charts = [
@@ -159,6 +203,35 @@ export default function DashboardClima() {
 
   // Tooltip personalizado
   const customTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div style={{
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          backdropFilter: 'blur(10px)',
+          padding: '12px',
+          borderRadius: '12px',
+          boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.2)'
+        }}>
+          <p style={{ color: '#6b7280', fontSize: '14px', margin: '0 0 4px 0' }}>
+            {`${getOpalChartConfig().xLabel}: ${label}`}
+          </p>
+          <p style={{ 
+            fontWeight: '600', 
+            color: payload[0].color,
+            margin: 0,
+            fontSize: '16px'
+          }}>
+            {`${getOpalChartConfig().yLabel}: ${payload[0].value}`}
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // Tooltip personalizado para clima
+  const climaTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
         <div style={{
@@ -284,8 +357,13 @@ export default function DashboardClima() {
     systemHeader: {
       display: 'flex',
       alignItems: 'center',
-      gap: '12px',
+      justifyContent: 'space-between',
       marginBottom: '20px'
+    },
+    systemHeaderLeft: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px'
     },
     cardLeft: {
       display: 'flex',
@@ -375,8 +453,45 @@ export default function DashboardClima() {
       width: '8px',
       height: '8px',
       borderRadius: '50%'
+    },
+    modeSelector: {
+      display: 'flex',
+      gap: '8px',
+      marginBottom: '16px'
+    },
+    modeButton: {
+      padding: '8px 16px',
+      borderRadius: '12px',
+      border: '1px solid rgba(255, 255, 255, 0.2)',
+      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+      color: '#cbd5e1',
+      fontSize: '12px',
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+      backdropFilter: 'blur(5px)'
+    },
+    modeButtonActive: {
+      padding: '8px 16px',
+      borderRadius: '12px',
+      border: '1px solid rgba(107, 115, 255, 0.5)',
+      backgroundColor: 'rgba(107, 115, 255, 0.2)',
+      color: '#6b73ff',
+      fontSize: '12px',
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+      backdropFilter: 'blur(5px)',
+      fontWeight: '600'
+    },
+    chartTitle: {
+      color: 'white',
+      fontSize: '16px',
+      fontWeight: '600',
+      marginBottom: '12px',
+      textAlign: 'center'
     }
   };
+
+  const opalConfig = getOpalChartConfig();
 
   return (
     <div style={styles.container}>
@@ -405,6 +520,11 @@ export default function DashboardClima() {
           transform: translateY(-8px);
           box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
           background-color: rgba(255, 255, 255, 0.15);
+        }
+        
+        .mode-button:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+          transform: translateY(-2px);
         }
         
         .dashboard-card:nth-child(1) { animation-delay: 0ms; }
@@ -450,8 +570,7 @@ export default function DashboardClima() {
       <div style={styles.systemGrid}>
         
         {/* OPAL-RT */}
-        <div style={styles.systemCard} className="dashboard-card"
-        onClick={handleOpalClick}>
+        <div style={styles.systemCard} className="dashboard-card">
           {/* Gradient overlay para OPAL-RT */}
           <div style={{
             position: 'absolute',
@@ -466,16 +585,73 @@ export default function DashboardClima() {
           <div style={{ position: 'relative', zIndex: 2 }}>
             {/* Header de OPAL-RT */}
             <div style={styles.systemHeader}>
-              <div style={{
-                ...styles.systemIcon,
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)'
-              }}>
-                🖥️
+              <div style={styles.systemHeaderLeft}>
+                <div style={{
+                  ...styles.systemIcon,
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                }}>
+                  🖥️
+                </div>
+                <div>
+                  <h3 style={styles.systemTitle}>OPAL-RT</h3>
+                  <p style={styles.systemSubtitle}>Sistema de simulación en tiempo real</p>
+                </div>
               </div>
-              <div>
-                <h3 style={styles.systemTitle}>OPAL-RT</h3>
-                <p style={styles.systemSubtitle}>Sistema de simulación en tiempo real</p>
-              </div>
+              
+              {/* Botón para navegar */}
+              <button 
+                onClick={handleOpalClick}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  backdropFilter: 'blur(5px)'
+                }}
+                onMouseOver={(e) => {
+                  e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                }}
+                onMouseOut={(e) => {
+                  e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                }}
+              >
+                Ver Detalles
+              </button>
+            </div>
+
+            {/* Selector de modo */}
+            <div style={styles.modeSelector}>
+              <button
+                className="mode-button"
+                style={opalChartMode === 'potencia-tiempo' ? styles.modeButtonActive : styles.modeButton}
+                onClick={() => setOpalChartMode('potencia-tiempo')}
+              >
+                Potencia vs Tiempo
+              </button>
+              <button
+                className="mode-button"
+                style={opalChartMode === 'corriente-voltaje' ? styles.modeButtonActive : styles.modeButton}
+                onClick={() => setOpalChartMode('corriente-voltaje')}
+              >
+                Corriente vs Voltaje
+              </button>
+              <button
+                className="mode-button"
+                style={opalChartMode === 'potencia-voltaje' ? styles.modeButtonActive : styles.modeButton}
+                onClick={() => setOpalChartMode('potencia-voltaje')}
+              >
+                Potencia vs Voltaje
+              </button>
+            </div>
+
+            {/* Título del gráfico actual */}
+            <div style={styles.chartTitle}>
+              {opalConfig.title}
             </div>
 
             {/* Gráfico de OPAL-RT */}
@@ -484,24 +660,36 @@ export default function DashboardClima() {
                 <LineChart data={opalData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                   <XAxis 
-                    dataKey="timestamp" 
+                    dataKey={opalConfig.xKey}
                     tick={{ fontSize: 12, fill: '#cbd5e1' }}
                     axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
                     tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                    label={{ 
+                      value: opalConfig.xLabel, 
+                      position: 'insideBottom', 
+                      offset: -10,
+                      style: { textAnchor: 'middle', fill: '#cbd5e1', fontSize: '12px' }
+                    }}
                   />
                   <YAxis 
                     tick={{ fontSize: 12, fill: '#cbd5e1' }}
                     axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
                     tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+                    label={{ 
+                      value: opalConfig.yLabel, 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      style: { textAnchor: 'middle', fill: '#cbd5e1', fontSize: '12px' }
+                    }}
                   />
                   <Tooltip content={customTooltip} />
                   <Line 
                     type="monotone" 
-                    dataKey="valor" 
-                    stroke="#6b73ff" 
+                    dataKey={opalConfig.yKey}
+                    stroke={opalConfig.color}
                     strokeWidth={3} 
-                    dot={{ fill: '#6b73ff', strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6, fill: '#6b73ff', strokeWidth: 2, stroke: '#fff' }}
+                    dot={{ fill: opalConfig.color, strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, fill: opalConfig.color, strokeWidth: 2, stroke: '#fff' }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -515,7 +703,7 @@ export default function DashboardClima() {
               <div style={styles.footerRight}>
                 <div style={{
                   ...styles.statusDot,
-                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                  background: opalConfig.color
                 }}></div>
                 <span style={styles.footerLeft}>Sistema activo</span>
               </div>
@@ -540,15 +728,17 @@ export default function DashboardClima() {
           <div style={{ position: 'relative', zIndex: 2 }}>
             {/* Header de DT */}
             <div style={styles.systemHeader}>
-              <div style={{
-                ...styles.systemIcon,
-                background: 'linear-gradient(135deg, #ef4444, #f97316)'
-              }}>
-                🔗
-              </div>
-              <div>
-                <h3 style={styles.systemTitle}>DT</h3>
-                <p style={styles.systemSubtitle}>Digital Twin en tiempo real</p>
+              <div style={styles.systemHeaderLeft}>
+                <div style={{
+                  ...styles.systemIcon,
+                  background: 'linear-gradient(135deg, #ef4444, #f97316)'
+                }}>
+                  🔗
+                </div>
+                <div>
+                  <h3 style={styles.systemTitle}>DT</h3>
+                  <p style={styles.systemSubtitle}>Digital Twin en tiempo real</p>
+                </div>
               </div>
             </div>
 
@@ -568,7 +758,7 @@ export default function DashboardClima() {
                     axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
                     tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
                   />
-                  <Tooltip content={customTooltip} />
+                  <Tooltip content={climaTooltip} />
                   <Line 
                     type="monotone" 
                     dataKey="valor" 
@@ -659,7 +849,7 @@ export default function DashboardClima() {
                       axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
                       tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
                     />
-                    <Tooltip content={customTooltip} />
+                    <Tooltip content={climaTooltip} />
                     <Line
                       type="monotone"
                       dataKey={chart.key}
