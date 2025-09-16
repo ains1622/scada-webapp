@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, RadialBarChart, RadialBar, PolarAngleAxis } from 'recharts';
 import { Filter, Calendar, TrendingUp, BarChart3, Activity, Download, Settings, RefreshCw, ArrowLeft, Eye, EyeOff, Thermometer, TrendingDown, AlertTriangle, Zap, Gauge, Wind, Navigation, Sun, Droplets } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
 export default function ParametroDetalles({ data, title, parametro }) {
   // Estados para filtros y configuración
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
@@ -11,6 +10,9 @@ export default function ParametroDetalles({ data, title, parametro }) {
   const [showFilters, setShowFilters] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showStats, setShowStats] = useState(['actual', 'minMax', 'promedio']);
+  const [data, setData] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [alertThresholds, setAlertThresholds] = useState(() => {
     // Valores por defecto según el parámetro
     const defaults = {
@@ -27,6 +29,32 @@ export default function ParametroDetalles({ data, title, parametro }) {
   const handleVolver = () => {
     navigate('/clima');
   };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const queryParams = new URLSearchParams();
+        if (dateRange.start) queryParams.append('start', dateRange.start);
+        if (dateRange.end) queryParams.append('end', dateRange.end);
+
+        const response = await fetch(`/clima?${queryParams.toString()}`);
+        if (!response.ok) {
+          throw new Error('Error al cargar los datos');
+        }
+        const result = await response.json();
+        setData(result);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [dateRange.start, dateRange.end]);
+
   // Configuración específica para cada parámetro
   const parametroConfig = useMemo(() => {
     const configs = {
@@ -37,7 +65,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
         nombreCompleto: 'Humedad Relativa',
         rangosNormales: '30-80%',
         metricaPrincipal: 'humedad',
-        metricasSecundarias: ['punto_rocio']
       },
       presion: {
         unidad: ' hPa',
@@ -46,7 +73,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
         nombreCompleto: 'Presión Atmosférica',
         rangosNormales: '980-1050 hPa',
         metricaPrincipal: 'presion',
-        metricasSecundarias: ['tendencia_presion']
       },
       velocidad_viento: {
         unidad: ' km/h',
@@ -54,8 +80,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         icono: Wind,
         nombreCompleto: 'Velocidad del Viento',
         rangosNormales: '0-50 km/h',
-        metricaPrincipal: 'velocidad_viento',
-        metricasSecundarias: ['rafaga_maxima']
+        metricaPrincipal: 'v_viento',
       },
       direccion_viento: {
         unidad: '°',
@@ -63,8 +88,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         icono: Navigation,
         nombreCompleto: 'Dirección del Viento',
         rangosNormales: '0-360°',
-        metricaPrincipal: 'direccion_viento',
-        metricasSecundarias: ['variacion_direccion']
+        metricaPrincipal: 'd_viento',
       },
       indice_uv: {
         unidad: '',
@@ -72,8 +96,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         icono: Sun,
         nombreCompleto: 'Índice Ultravioleta',
         rangosNormales: '0-11',
-        metricaPrincipal: 'indice_uv',
-        metricasSecundarias: ['exposicion']
+        metricaPrincipal: 'indiceuv',
       },
       temperatura: {
         unidad: '°C',
@@ -82,14 +105,11 @@ export default function ParametroDetalles({ data, title, parametro }) {
         nombreCompleto: 'Temperatura',
         rangosNormales: '10-35°C',
         metricaPrincipal: 'temperatura',
-        metricasSecundarias: ['sensacion_termica', 'punto_rocio', 'indice_calor']
       }
     };
     return configs[parametro] || configs.temperatura;
   }, [parametro]);
-
   const IconoParametro = parametroConfig.icono;
-
   // Datos de ejemplo para demostración (en caso de que no haya datos)
   const sampleData = useMemo(() => {
     if (data && Array.isArray(data)) return data;
@@ -162,11 +182,12 @@ export default function ParametroDetalles({ data, title, parametro }) {
       };
     });
   }, [data, parametro, alertThresholds, parametroConfig]);
-
   // Filtrar datos según criterios
   const filteredData = useMemo(() => {
-    let filtered = [...sampleData];
-    
+    if (!data || !Array.isArray(data)) return [];
+
+    let filtered = [...data];
+
     if (dateRange.start && dateRange.end) {
       const start = new Date(dateRange.start);
       const end = new Date(dateRange.end);
@@ -175,10 +196,9 @@ export default function ParametroDetalles({ data, title, parametro }) {
         return itemDate >= start && itemDate <= end;
       });
     }
-    
-    return filtered;
-  }, [sampleData, dateRange]);
 
+    return filtered;
+  }, [data, dateRange]);
   // Cálculos estadísticos
   const stats = useMemo(() => {
     if (!filteredData.length) return {};
@@ -207,7 +227,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
       range: max - min
     };
   }, [filteredData, parametroConfig]);
-
   // Tooltip personalizado
   const customTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
@@ -255,7 +274,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
     }
     return null;
   };
-
   // Gráfico especial para dirección del viento (rosa de los vientos)
   const renderWindDirectionChart = () => {
     // Agrupar datos por dirección (8 sectores)
@@ -269,7 +287,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
       { name: 'W', start: 247.5, end: 292.5, value: 0 },
       { name: 'NW', start: 292.5, end: 337.5, value: 0 }
     ];
-
     // Contar frecuencia por sector
     filteredData.forEach(item => {
       const direction = item.direccion_viento;
@@ -283,9 +300,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         }
       }
     });
-
     const maxValue = Math.max(...directionSectors.map(s => s.value));
-
     return (
       <RadialBarChart 
         width={500} 
@@ -331,17 +346,14 @@ export default function ParametroDetalles({ data, title, parametro }) {
       </RadialBarChart>
     );
   };
-
   const renderChart = () => {
     if (parametro === 'direccion_viento') {
       return renderWindDirectionChart();
     }
-
     const commonProps = {
       data: filteredData,
       margin: { top: 20, right: 30, left: 20, bottom: 60 }
     };
-
     const metricas = [
       { 
         key: parametroConfig.metricaPrincipal, 
@@ -367,7 +379,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
         };
       })
     ];
-
     switch (chartType) {
       case 'area':
         return (
@@ -515,7 +526,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
         );
     }
   };
-
   // Estilos usando el mismo tema del dashboard principal
   const styles = {
     container: {
@@ -777,7 +787,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
       color: parametroConfig.color
     }
   };
-
   return (
     <div style={styles.container}>
       <style>{`
@@ -819,7 +828,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
           box-shadow: 0 0 0 3px ${parametroConfig.color}33;
         }
       `}</style>
-
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerContent}>
@@ -877,7 +885,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
           </div>
         </div>
       </div>
-
       <div style={styles.main}>
         {/* Sidebar */}
         {showFilters && (
@@ -888,7 +895,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                 {parametroConfig.nombreCompleto}
               </h2>
             </div>
-
             {/* Estadísticas principales */}
             <div style={styles.section}>
               <label style={styles.sectionLabel}>Estado Actual del Sistema</label>
@@ -910,7 +916,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                   <p style={styles.statLabel}>Máxima</p>
                 </div>
               </div>
-
               {/* Alertas */}
               {stats.alerts > 0 && parametro !== 'direccion_viento' && (
                 <div style={styles.alertsCard}>
@@ -923,7 +928,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                   </p>
                 </div>
               )}
-
               {/* Tendencia */}
               {parametro !== 'direccion_viento' && (
                 <div style={{
@@ -949,7 +953,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                 </div>
               )}
             </div>
-
             {/* Selector de tipo de gráfico */}
             <div style={styles.section}>
               <label style={styles.sectionLabel}>Tipo de Visualización</label>
@@ -984,7 +987,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                 })}
               </div>
             </div>
-
             {/* Filtros de fecha */}
             <div style={styles.section}>
               <label style={styles.sectionLabel}>Rango de Fechas</label>
@@ -1013,7 +1015,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                 </div>
               </div>
             </div>
-
             {/* Agregación temporal */}
             <div style={styles.section}>
               <label style={styles.sectionLabel}>Agrupación Temporal</label>
@@ -1028,7 +1029,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                 <option value="day">Por día</option>
               </select>
             </div>
-
             {/* Configuración de alertas */}
             {parametro !== 'direccion_viento' && (
               <div style={styles.section}>
@@ -1062,7 +1062,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                 </p>
               </div>
             )}
-
             {/* Estadísticas a mostrar */}
             <div style={styles.section}>
               <label style={styles.sectionLabel}>Estadísticas a Mostrar</label>
@@ -1093,7 +1092,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
             </div>
           </div>
         )}
-
         {/* Contenido principal */}
         <div style={styles.content}>
           {/* Barra de herramientas */}
@@ -1110,14 +1108,12 @@ export default function ParametroDetalles({ data, title, parametro }) {
               {showFilters ? <EyeOff style={{ width: '16px', height: '16px' }} /> : <Eye style={{ width: '16px', height: '16px' }} />}
               <span>{showFilters ? 'Ocultar filtros' : 'Mostrar filtros'}</span>
             </button>
-
             <div style={styles.toolbarRight}>
               <span>Mostrando {filteredData.length} registros</span>
               <span>•</span>
               <span>Actualizado: {new Date().toLocaleTimeString('es-ES')}</span>
             </div>
           </div>
-
           {/* Área del gráfico */}
           <div style={styles.chartArea}>
             <div style={styles.chartContainer}>
@@ -1134,7 +1130,6 @@ export default function ParametroDetalles({ data, title, parametro }) {
                   Visualización de datos históricos de {parametroConfig.nombreCompleto.toLowerCase()}
                 </p>
               </div>
-
               <ResponsiveContainer width="100%" height="85%">
                 {renderChart()}
               </ResponsiveContainer>
