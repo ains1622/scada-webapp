@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, RadialBarChart, RadialBar, PolarAngleAxis } from 'recharts';
 import { Filter, Calendar, TrendingUp, BarChart3, Activity, Download, Settings, RefreshCw, ArrowLeft, Eye, EyeOff, Thermometer, TrendingDown, AlertTriangle, Zap, Gauge, Wind, Navigation, Sun, Droplets } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-export default function ParametroDetalles({ data, title, parametro }) {
+export default function ParametroDetalles({ datas, title, parametro }) {
   // Estados para filtros y configuración
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [chartType, setChartType] = useState('line');
@@ -74,7 +74,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         rangosNormales: '980-1050 hPa',
         metricaPrincipal: 'presion',
       },
-      velocidad_viento: {
+      v_viento: {
         unidad: ' km/h',
         color: '#06b6d4',
         icono: Wind,
@@ -82,7 +82,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         rangosNormales: '0-50 km/h',
         metricaPrincipal: 'v_viento',
       },
-      direccion_viento: {
+      d_viento: {
         unidad: '°',
         color: '#ec4899',
         icono: Navigation,
@@ -90,7 +90,7 @@ export default function ParametroDetalles({ data, title, parametro }) {
         rangosNormales: '0-360°',
         metricaPrincipal: 'd_viento',
       },
-      indice_uv: {
+      indiceuv: {
         unidad: '',
         color: '#eab308',
         icono: Sun,
@@ -120,48 +120,37 @@ export default function ParametroDetalles({ data, title, parametro }) {
       const date = new Date(now.getTime() - (200 - i) * 60 * 60 * 1000);
       const hourOfDay = date.getHours();
       
-      let valorPrincipal, valorSecundario;
+      let valorPrincipal;
       
       // Patrones específicos para cada parámetro
       switch(parametro) {
         case 'humedad':
-          // Patrón diario de humedad (más alta en la madrugada, más baja al mediodía)
           const dailyPatternHumedad = 60 - Math.sin((hourOfDay - 6) * Math.PI / 12) * 20;
           valorPrincipal = dailyPatternHumedad + Math.sin(i * 0.03) * 10 + (Math.random() * 6 - 3);
-          valorSecundario = valorPrincipal - 5 - Math.random() * 3; // Punto de rocío
           break;
           
         case 'presion':
-          // Patrón de presión con variaciones suaves
           valorPrincipal = 1015 + Math.sin(i * 0.05) * 15 + (Math.random() * 4 - 2);
-          valorSecundario = Math.sin(i * 0.1) * 2; // Tendencia
           break;
           
         case 'v_viento':
-          // Patrón de viento con ráfagas
           const baseViento = 10 + Math.sin(i * 0.1) * 8;
           valorPrincipal = baseViento + Math.random() * 5;
-          valorSecundario = valorPrincipal + Math.random() * 8; // Ráfaga máxima
           break;
           
         case 'd_viento':
-          // Dirección del viento en grados (0-360)
           valorPrincipal = (Math.sin(i * 0.05) * 180 + 180) % 360;
-          valorSecundario = Math.random() * 30 - 15; // Variación
           break;
           
         case 'indiceuv':
-          // Índice UV más alto al mediodía
           const uvPattern = 5 + Math.sin((hourOfDay - 12) * Math.PI / 12) * 4;
           valorPrincipal = Math.max(0, uvPattern + Math.sin(i * 0.02) * 2 + (Math.random() * 1.5 - 0.75));
-          valorSecundario = valorPrincipal > 6 ? 'Alta' : valorPrincipal > 3 ? 'Moderada' : 'Baja'; // Exposición
           break;
           
         default: // temperatura
           const dailyPattern = 25 + Math.sin((hourOfDay - 6) * Math.PI / 12) * 8;
           const seasonal = Math.sin(i * 0.02) * 3;
           valorPrincipal = dailyPattern + seasonal + (Math.random() * 4 - 2);
-          valorSecundario = valorPrincipal + Math.random() * 3 - 1.5; // Sensación térmica
       }
       
       return {
@@ -174,10 +163,10 @@ export default function ParametroDetalles({ data, title, parametro }) {
           month: 'short', 
           day: 'numeric' 
         }),
+        // sólo la métrica principal
         [parametroConfig.metricaPrincipal]: Math.round(valorPrincipal * 100) / 100,
-        [parametroConfig.metricasSecundarias[0]]: Math.round(valorSecundario * 100) / 100,
         isAlert: parametro === 'direccion_viento' 
-          ? false // La dirección del viento no tiene alertas
+          ? false
           : valorPrincipal < alertThresholds.min || valorPrincipal > alertThresholds.max
       };
     });
@@ -287,9 +276,10 @@ export default function ParametroDetalles({ data, title, parametro }) {
       { name: 'W', start: 247.5, end: 292.5, value: 0 },
       { name: 'NW', start: 292.5, end: 337.5, value: 0 }
     ];
-    // Contar frecuencia por sector
+    // Contar frecuencia por sector (usar la métrica principal para la dirección)
     filteredData.forEach(item => {
-      const direction = item.direccion_viento;
+      const direction = item[parametroConfig.metricaPrincipal];
+      if (typeof direction !== 'number') return;
       for (const sector of directionSectors) {
         if (
           (sector.start <= sector.end && direction >= sector.start && direction < sector.end) ||
@@ -354,30 +344,13 @@ export default function ParametroDetalles({ data, title, parametro }) {
       data: filteredData,
       margin: { top: 20, right: 30, left: 20, bottom: 60 }
     };
+    // Solo la métrica principal
     const metricas = [
       { 
         key: parametroConfig.metricaPrincipal, 
         name: parametroConfig.nombreCompleto, 
         color: parametroConfig.color 
-      },
-      ...parametroConfig.metricasSecundarias.map((metrica, index) => {
-        const colores = ['#f97316', '#06b6d4', '#eab308', '#8b5cf6', '#ec4899'];
-        const nombres = {
-          punto_rocio: 'Punto de Rocío',
-          tendencia_presion: 'Tendencia',
-          rafaga_maxima: 'Ráfaga Máxima',
-          variacion_direccion: 'Variación',
-          exposicion: 'Exposición',
-          sensacion_termica: 'Sensación Térmica',
-          indice_calor: 'Índice de Calor'
-        };
-        
-        return {
-          key: metrica,
-          name: nombres[metrica] || metrica,
-          color: colores[index % colores.length]
-        };
-      })
+      }
     ];
     switch (chartType) {
       case 'area':

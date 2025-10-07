@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
+import { useNavigate } from 'react-router-dom';
 import {
   LineChart,
   Line,
@@ -8,10 +10,6 @@ import {
   CartesianGrid,
   ResponsiveContainer
 } from "recharts";
-import { io } from "socket.io-client";
-import { useNavigate } from 'react-router-dom';
-import dotenv from "dotenv";
-dotenv.config();
 
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:4000";
 
@@ -25,33 +23,88 @@ export default function DashboardClima() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const socket = io(SOCKET_URL);
-    socket.on("connect", () => {
-      console.log("Conectado a WebSocket del servidor");
-    });
-    socket.on("clima_update", (registro) => {
-      setData((prev) => {
-        const updated = [...prev, registro];
-        if (updated.length > MAX_POINTS) updated.shift();
-        return updated;
+    const socket = io(SOCKET_URL, { transports: ['websocket'] });
+    const mounted = { current: true };
+
+    // Helper para normalizar puntos con timestamp
+    const makePoint = (payload) => {
+      // Si payload ya contiene timestamp, úsalo; si no, crea uno
+      return {
+        timestamp: payload.timestamp || new Date().toISOString(),
+        ...payload
+      };
+    };
+
+    // Maneja actualizaciones de clima (principal)
+    const onClima = (payload) => {
+      if (!mounted.current) return;
+      const point = makePoint(payload);
+      setData(prev => {
+        const next = [...prev, point].slice(-MAX_POINTS);
+        return next;
       });
-      setAllData((prev) => [...prev, registro]);
-    });
-    socket.on("opal_update", (registro) => {
+      setAllData(prev => [...prev, point]);
+    };
+
+    // Maneja actualizaciones de OPAL
+    const onOpal = (payload) => {
+      if (!mounted.current) return;
+      const point = makePoint(payload);
       setOpalData(prev => {
-        const updated = [...prev, registro];
-        if (updated.length > MAX_POINTS) updated.shift();
-        return updated;
+        const next = [...prev, point].slice(-MAX_POINTS);
+        return next;
       });
-    });
-    socket.on("dt_update", (registro) => {
+    };
+
+    // Maneja actualizaciones de DT
+    const onDt = (payload) => {
+      if (!mounted.current) return;
+      const point = makePoint(payload);
       setDtData(prev => {
-        const updated = [...prev, registro];
-        if (updated.length > MAX_POINTS) updated.shift();
-        return updated;
+        const next = [...prev, point].slice(-MAX_POINTS);
+        return next;
       });
+    };
+
+    // Eventos del socket (nombres puros; ajusta si tu servidor usa otros)
+    socket.on('connect', () => {
+      console.debug('socket conectado', socket.id);
     });
-    return () => { socket.disconnect(); };
+
+    socket.on('clima', onClima);
+    socket.on('clima:update', onClima);
+    socket.on('opal', onOpal);
+    socket.on('opal:update', onOpal);
+    socket.on('dt', onDt);
+    socket.on('dt:update', onDt);
+
+    // Evento inicial que puede traer snapshot de datos
+    socket.on('initial', (payload = {}) => {
+      if (!mounted.current) return;
+      if (payload.clima && Array.isArray(payload.clima)) {
+        setAllData(payload.clima);
+        setData(payload.clima.slice(-MAX_POINTS));
+      }
+      if (payload.opal && Array.isArray(payload.opal)) {
+        setOpalData(payload.opal.slice(-MAX_POINTS));
+      }
+      if (payload.dt && Array.isArray(payload.dt)) {
+        setDtData(payload.dt.slice(-MAX_POINTS));
+      }
+    });
+
+    // Limpieza
+    return () => {
+      mounted.current = false;
+      socket.off('clima', onClima);
+      socket.off('clima:update', onClima);
+      socket.off('opal', onOpal);
+      socket.off('opal:update', onOpal);
+      socket.off('dt', onDt);
+      socket.off('dt:update', onDt);
+      socket.off('initial');
+      socket.disconnect();
+    };
   }, []);
 
   const handleCardClick = (chartKey) => {
