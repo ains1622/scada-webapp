@@ -80,6 +80,7 @@ services:
       - /app/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true # React detecta cambios en WSL o contenedores
+      - REACT_APP_SOCKET_URL=http://localhost:4000
     depends_on:
       - backend
     networks:

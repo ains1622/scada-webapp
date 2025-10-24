@@ -19,7 +19,6 @@ export const runConsumer = async (io) => {
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
         const data = JSON.parse(message.value.toString());
-        //console.log("📡 Kafka -> recibido:", data);
         try {
           const query = `
             INSERT INTO clima (temperatura, humedad, presion, v_viento, d_viento, indiceuv, timestamp)
@@ -38,8 +37,10 @@ export const runConsumer = async (io) => {
         } catch (err) {
           console.error("Error insertando en DB:", err);
         }
-        io.emit("clima_update", data);
-        //console.log("📡 Kafka -> WS:", data);
+  // Emitir el evento principal y uno legacy para compatibilidad con clientes
+  io.emit("clima_update", data);
+  io.emit("clima", data);
+        //console.log('Mensaje enviado:', data);
       },
     });
   } catch (err) {

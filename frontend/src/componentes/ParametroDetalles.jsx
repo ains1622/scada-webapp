@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, RadialBarChart, RadialBar, PolarAngleAxis } from 'recharts';
 import { Filter, Calendar, TrendingUp, BarChart3, Activity, Download, Settings, RefreshCw, ArrowLeft, Eye, EyeOff, Thermometer, TrendingDown, AlertTriangle, Zap, Gauge, Wind, Navigation, Sun, Droplets } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -30,30 +30,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     navigate('/clima');
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const queryParams = new URLSearchParams();
-        if (dateRange.start) queryParams.append('start', dateRange.start);
-        if (dateRange.end) queryParams.append('end', dateRange.end);
-
-        const response = await fetch(`/clima?${queryParams.toString()}`);
-        if (!response.ok) {
-          throw new Error('Error al cargar los datos');
-        }
-        const result = await response.json();
-        setData(result);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [dateRange.start, dateRange.end]);
+  
 
   // Configuración específica para cada parámetro
   const parametroConfig = useMemo(() => {
@@ -171,6 +148,126 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       };
     });
   }, [data, parametro, alertThresholds, parametroConfig]);
+  // Ref para el interval ID
+  const pollRef = useRef(null);
+
+  // Helper: agrega agregación temporal (raw, minute, hour, day)
+  const aggregateData = (rows, agg, metricKey) => {
+    if (!rows || !rows.length) return [];
+    if (agg === 'raw') return rows;
+
+    const buckets = new Map();
+    rows.forEach((r) => {
+      const ts = new Date(r.timestamp);
+      let key;
+      switch (agg) {
+        case 'minute':
+          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()} ${ts.getHours()}:${ts.getMinutes()}`;
+          break;
+        case 'hour':
+          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()} ${ts.getHours()}:00`;
+          break;
+        case 'day':
+          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()}`;
+          break;
+        default:
+          key = ts.toISOString();
+      }
+      const val = Number(r[metricKey]);
+      if (!buckets.has(key)) buckets.set(key, { sum: 0, count: 0, ts });
+      const bucket = buckets.get(key);
+      if (!isNaN(val)) {
+        bucket.sum += val;
+        bucket.count += 1;
+      }
+    });
+
+    const out = Array.from(buckets.entries()).map(([k, v]) => {
+      const avg = v.count > 0 ? v.sum / v.count : null;
+      const d = new Date(v.ts);
+      return {
+        timestamp: d.toISOString(),
+        time: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+        date: d.toLocaleDateString('es-ES'),
+        fullDate: d.toLocaleString('es-ES'),
+        [metricKey]: avg !== null ? Math.round(avg * 100) / 100 : null,
+        isAlert: false
+      };
+    });
+    // ordenar por timestamp
+    out.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    return out;
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const queryParams = new URLSearchParams();
+        if (dateRange.start) queryParams.append('start', dateRange.start);
+        if (dateRange.end) queryParams.append('end', dateRange.end);
+        // indicar qué métrica queremos (backend implementará filtro)
+        if (parametro) queryParams.append('metric', parametro);
+        queryParams.append('agg', timeAggregation || 'raw');
+
+        const response = await fetch(`/clima?${queryParams.toString()}`);
+        if (!response.ok) throw new Error('Error al cargar los datos');
+        const result = await response.json();
+
+        if (!mounted) return;
+
+        // normalizar filas (espera que cada fila tenga timestamp y la clave de métrica)
+        const metricKey = parametroConfig.metricaPrincipal;
+        const rows = Array.isArray(result) ? result.map(r => ({ ...r })) : [];
+
+        // Filtrar por rango de fechas en cliente (por si el backend no lo hace)
+        let filtered = rows;
+        if (dateRange.start || dateRange.end) {
+          filtered = rows.filter((item) => {
+            const t = new Date(item.timestamp);
+            if (dateRange.start && t < new Date(dateRange.start)) return false;
+            if (dateRange.end && t > new Date(dateRange.end)) return false;
+            return true;
+          });
+        }
+
+        // Agregación
+        const aggregated = aggregateData(filtered, timeAggregation, metricKey);
+
+        // Añadir campos auxiliares y flags de alerta
+        const enriched = aggregated.map((it) => ({
+          ...it,
+          isAlert: parametro !== 'd_viento' && typeof it[metricKey] === 'number' && (it[metricKey] < alertThresholds.min || it[metricKey] > alertThresholds.max)
+        }));
+
+        setData(enriched);
+      } catch (err) {
+        if (!mounted) return;
+        setError(err.message || String(err));
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    // fetch inicial
+    fetchData();
+
+    // Polling: si autoRefresh está activo, re-ejecutar cada 10s
+    if (autoRefresh) {
+      pollRef.current = setInterval(fetchData, 10000);
+    }
+
+    return () => {
+      mounted = false;
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [dateRange.start, dateRange.end, timeAggregation, parametro, autoRefresh, parametroConfig, alertThresholds]);
   // Filtrar datos según criterios
   const filteredData = useMemo(() => {
     if (!data || !Array.isArray(data)) return [];

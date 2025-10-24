@@ -11,7 +11,9 @@ import {
   ResponsiveContainer
 } from "recharts";
 
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:4000";
+// Preferir variable de entorno (CRA): REACT_APP_SOCKET_URL
+// En entornos con Docker, define REACT_APP_SOCKET_URL=http://backend:4000
+const SOCKET_URL = "http://localhost:4000";
 
 export default function DashboardClima() {
   const [data, setData] = useState([]);
@@ -71,8 +73,14 @@ export default function DashboardClima() {
       console.debug('socket conectado', socket.id);
     });
 
+    // Compatibilidad con eventos emitidos por el backend (consumer usa 'clima_update')
     socket.on('clima', onClima);
     socket.on('clima:update', onClima);
+    socket.on('clima_update', onClima);
+
+    socket.on('connect_error', (err) => {
+      console.error('Socket connect_error:', err);
+    });
     socket.on('opal', onOpal);
     socket.on('opal:update', onOpal);
     socket.on('dt', onDt);
