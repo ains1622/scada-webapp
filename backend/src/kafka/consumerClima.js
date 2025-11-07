@@ -1,5 +1,5 @@
 import { Kafka } from "kafkajs";
-import pool from "../db.js";
+import {pool} from "../db.js";
 
 const kafka = new Kafka({
   clientId: "scada-backend",
@@ -37,9 +37,9 @@ export const runConsumer = async (io) => {
         } catch (err) {
           console.error("Error insertando en DB:", err);
         }
-  // Emitir el evento principal y uno legacy para compatibilidad con clientes
-  io.emit("clima_update", data);
-  io.emit("clima", data);
+        // Emitir el evento principal y uno legacy para compatibilidad con clientes
+        io.emit("clima_update", data);
+        io.emit("clima", data);
         //console.log('Mensaje enviado:', data);
       },
     });
@@ -47,3 +47,4 @@ export const runConsumer = async (io) => {
     console.error("Error iniciando el consumer:", err);
   }
 };
+export default runConsumer;

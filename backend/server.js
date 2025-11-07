@@ -1,6 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
-import { testConexion, getData, getDataFiltered } from "./src/db.js";
+import { testConexion, getData, getDataFiltered, getAlertThreshold, upsertAlertThreshold } from "./src/db.js";
 import cors from "cors";
 import { Server } from "socket.io";
 import http from "http";
@@ -65,12 +65,69 @@ app.get("/", (req, res) => {
 app.get("/clima", async (req, res) => {
   try {
     const { start, end, agg, metric } = req.query;
-    const data = await getDataFiltered({ start, end, agg });
-    // Si el cliente pide sólo una métrica específica, devolverla tal cual (frontend puede manejar)
-    res.json(data);
+
+    // Normalizar start/end a ISO y hacer end inclusivo
+    let startISO = null;
+    let endISO = null;
+    if (start) {
+      const ds = new Date(start);
+      if (!isNaN(ds)) startISO = ds.toISOString();
+    }
+    if (end) {
+      const de = new Date(end);
+      if (!isNaN(de)) {
+        // Hacer end inclusivo: añadir 999 ms para incluir registros con el mismo segundo/milisegundo
+        de.setMilliseconds(de.getMilliseconds() + 999);
+        endISO = de.toISOString();
+      }
+    }
+
+    let data = await getDataFiltered({ start: startISO, end: endISO, agg });
+     // Si piden una métrica concreta, devolver objetos reducidos { timestamp, <metric> }
+     if (metric && Array.isArray(data)) {
+       data = data.map(row => {
+         // normalizar timestamp si viene con otro nombre
+         const ts = row.timestamp || row.time || row.ts || null;
+         return {
+           timestamp: ts,
+           // si la columna no existe, devolver null para mantener esquema consistente
+           [metric]: row.hasOwnProperty(metric) ? row[metric] : null
+         };
+       });
+     }
+     res.json(data);
   } catch (error) {
     console.error("Error fetching data:", error);
     res.status(500).json({ error: "Error en la base de datos" });
+  }
+});
+
+// Obtener umbrales para un parámetro
+app.get('/alertas/:param', async (req, res) => {
+  try {
+    const param = req.params.param;
+    const row = await getAlertThreshold(param);
+    if (!row) return res.json({ parametro: param, min: null, max: null });
+    res.json({ parametro: param, min: row.min_value, max: row.max_value, updated_at: row.updated_at });
+  } catch (err) {
+    console.error('GET /alertas error', err);
+    res.status(500).json({ error: 'Error al leer umbrales' });
+  }
+});
+
+// Actualizar/crear umbrales para un parámetro
+app.put('/alertas/:param', express.json(), async (req, res) => {
+  try {
+    const param = req.params.param;
+    const { min, max } = req.body;
+    if (typeof min !== 'number' || typeof max !== 'number') {
+      return res.status(400).json({ error: 'min y max deben ser números' });
+    }
+    await upsertAlertThreshold(param, min, max);
+    res.json({ ok: true, parametro: param, min, max });
+  } catch (err) {
+    console.error('PUT /alertas error', err);
+    res.status(500).json({ error: 'Error al guardar umbrales' });
   }
 });
 

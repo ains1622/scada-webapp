@@ -12,6 +12,13 @@ CREATE TABLE clima (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE alertas (
+  parametro TEXT PRIMARY KEY,
+  min_value DOUBLE PRECISION,
+  max_value DOUBLE PRECISION,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
 -- Función que emite notificación
 CREATE OR REPLACE FUNCTION notify_new_clima()
 RETURNS TRIGGER AS $$

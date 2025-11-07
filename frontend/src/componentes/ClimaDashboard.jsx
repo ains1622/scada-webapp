@@ -11,8 +11,7 @@ import {
   ResponsiveContainer
 } from "recharts";
 
-// Preferir variable de entorno (CRA): REACT_APP_SOCKET_URL
-// En entornos con Docker, define REACT_APP_SOCKET_URL=http://backend:4000
+
 const SOCKET_URL = "http://localhost:4000";
 
 export default function DashboardClima() {
@@ -77,7 +76,6 @@ export default function DashboardClima() {
     socket.on('clima', onClima);
     socket.on('clima:update', onClima);
     socket.on('clima_update', onClima);
-
     socket.on('connect_error', (err) => {
       console.error('Socket connect_error:', err);
     });

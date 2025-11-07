@@ -11,6 +11,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showStats, setShowStats] = useState(['actual', 'minMax', 'promedio']);
   const [data, setData] = useState([]);
+  const [lastUpdate, setLastUpdate] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [alertThresholds, setAlertThresholds] = useState(() => {
@@ -25,6 +26,10 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     };
     return defaults[parametro] || defaults.temperatura;
   });
+  const [savingThresholds, setSavingThresholds] = useState(false);
+  const [thresholdLoadError, setThresholdLoadError] = useState(null);
+  const [loadedThresholds, setLoadedThresholds] = useState(null); // umbrales tal como vienen de la BD
+  const [thresholdSaved, setThresholdSaved] = useState(false);
   const navigate = useNavigate();
   const handleVolver = () => {
     navigate('/clima');
@@ -150,6 +155,62 @@ export default function ParametroDetalles({ datas, title, parametro }) {
   }, [data, parametro, alertThresholds, parametroConfig]);
   // Ref para el interval ID
   const pollRef = useRef(null);
+  // Poll interval (ms) - cambiar aquí para ajustar la frecuencia de fetch
+  const POLL_INTERVAL_MS = 5000; // 5 segundos
+  
+  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+  // Cargar umbrales desde backend cuando cambia el parámetro
+  useEffect(() => {
+    let mounted = true;
+    const fetchThresholds = async () => {
+      try {
+        setThresholdLoadError(null);
+        const res = await fetch(`${API_BASE.replace(/\/+$/, '')}/alertas/${encodeURIComponent(parametro)}`);
+        if (!res.ok) throw new Error('No se pudo obtener umbrales');
+        const json = await res.json();
+        if (!mounted) return;
+        if (json && (json.min !== null || json.max !== null)) {
+          setAlertThresholds({
+            min: Number(json.min ?? alertThresholds.min),
+            max: Number(json.max ?? alertThresholds.max)
+          });
+          setLoadedThresholds({ min: Number(json.min ?? alertThresholds.min), max: Number(json.max ?? alertThresholds.max) });
+        }
+      } catch (err) {
+        if (!mounted) return;
+        console.error('Error cargando umbrales', err);
+        setThresholdLoadError(String(err));
+      }
+    };
+    if (parametro) fetchThresholds();
+    return () => { mounted = false; };
+  }, [parametro]); // eslint-disable-line
+
+  // Guardar/actualizar umbrales en backend
+  const saveAlertThresholds = async () => {
+    try {
+      setSavingThresholds(true);
+      const body = { min: Number(alertThresholds.min), max: Number(alertThresholds.max) };
+      const res = await fetch(`${API_BASE.replace(/\/+$/, '')}/alertas/${encodeURIComponent(parametro)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || 'Error guardando umbrales');
+      }
+      // actualizar estado local con los valores guardados
+      setLoadedThresholds({ min: Number(body.min), max: Number(body.max) });
+      setThresholdSaved(true);
+      setTimeout(() => setThresholdSaved(false), 2000);
+    } catch (err) {
+      console.error('Error guardando umbrales', err);
+      window.alert('Error guardando umbrales: ' + (err.message || String(err)));
+    } finally {
+      setSavingThresholds(false);
+    }
+  };
 
   // Helper: agrega agregación temporal (raw, minute, hour, day)
   const aggregateData = (rows, agg, metricKey) => {
@@ -199,6 +260,47 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     return out;
   };
 
+  // Exportar datos actuales a CSV separado por ';'
+  const exportCSV = () => {
+    const metricKey = parametroConfig.metricaPrincipal;
+    // Preferir datos filtrados por UI, si no usar los datos cargados
+    const rows = (filteredData && filteredData.length) ? filteredData : data;
+    if (!rows || !rows.length) {
+      // feedback simple al usuario
+      window.alert('No hay datos para exportar');
+      return;
+    }
+
+    const escape = (v) => {
+      if (v == null) return '""';
+      const s = String(v);
+      // escapar comillas dobles duplicándolas; envolver en comillas para preservar separadores
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+
+    const headers = ['timestamp', metricKey];
+    const lines = [];
+    lines.push(headers.map(h => escape(h)).join(';'));
+    for (const r of rows) {
+      const ts = r.timestamp || r.time || '';
+      const val = r[metricKey] != null ? r[metricKey] : '';
+      lines.push([escape(ts), escape(val)].join(';'));
+    }
+
+    const csv = lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const namePrefix = parametro || metricKey || 'export';
+    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    a.download = `${namePrefix}_${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -207,21 +309,53 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       setError(null);
       try {
         const queryParams = new URLSearchParams();
-        if (dateRange.start) queryParams.append('start', dateRange.start);
-        if (dateRange.end) queryParams.append('end', dateRange.end);
+        // Normalizar datetime-local (sin TZ) a ISO con zona (UTC) antes de enviar
+        if (dateRange.start) {
+          try {
+            const s = new Date(dateRange.start);
+            queryParams.append('start', s.toISOString());
+          } catch (e) {
+            queryParams.append('start', dateRange.start);
+          }
+        }
+        if (dateRange.end) {
+          try {
+            const e = new Date(dateRange.end);
+            queryParams.append('end', e.toISOString());
+          } catch (err) {
+            queryParams.append('end', dateRange.end);
+          }
+        }
         // indicar qué métrica queremos (backend implementará filtro)
         if (parametro) queryParams.append('metric', parametro);
         queryParams.append('agg', timeAggregation || 'raw');
 
-        const response = await fetch(`/clima?${queryParams.toString()}`);
+        // Construir URL completa hacia el backend usando API_BASE
+        const url = `${API_BASE.replace(/\/+$/, '')}/clima?${queryParams.toString()}`;
+        const response = await fetch(url);
         if (!response.ok) throw new Error('Error al cargar los datos');
         const result = await response.json();
-
+        
         if (!mounted) return;
-
-        // normalizar filas (espera que cada fila tenga timestamp y la clave de métrica)
         const metricKey = parametroConfig.metricaPrincipal;
-        const rows = Array.isArray(result) ? result.map(r => ({ ...r })) : [];
+
+        // Normalizar filas: asegurar timestamp y convertir valor a number.
+        // Filtrar filas donde la métrica no exista o no sea convertible a número.
+        const rows = (Array.isArray(result) ? result : []).map(r => {
+          const rawTs = r.timestamp || r.time || r.ts || new Date().toISOString();
+          const tsObj = new Date(rawTs);
+          const raw = r[metricKey];
+          const num = raw == null || raw === '' ? null : Number(raw);
+          return {
+            ...r,
+            // normalizar timestamp y campos legibles que usa el chart
+            timestamp: tsObj.toISOString(),
+            time: tsObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+            date: tsObj.toLocaleDateString('es-ES'),
+            fullDate: tsObj.toLocaleString('es-ES', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            [metricKey]: isNaN(num) ? null : num
+          };
+        }).filter(r => r.timestamp && r[metricKey] !== null);
 
         // Filtrar por rango de fechas en cliente (por si el backend no lo hace)
         let filtered = rows;
@@ -243,7 +377,10 @@ export default function ParametroDetalles({ datas, title, parametro }) {
           isAlert: parametro !== 'd_viento' && typeof it[metricKey] === 'number' && (it[metricKey] < alertThresholds.min || it[metricKey] > alertThresholds.max)
         }));
 
-        setData(enriched);
+        // Eliminar puntos con valor null por seguridad (recharts ignora nulls)
+        const final = enriched.filter(it => typeof it[metricKey] === 'number' && !isNaN(it[metricKey]));
+        setData(final);
+        setLastUpdate(new Date());
       } catch (err) {
         if (!mounted) return;
         setError(err.message || String(err));
@@ -255,9 +392,9 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     // fetch inicial
     fetchData();
 
-    // Polling: si autoRefresh está activo, re-ejecutar cada 10s
+    // Polling: si autoRefresh está activo, re-ejecutar cada POLL_INTERVAL_MS
     if (autoRefresh) {
-      pollRef.current = setInterval(fetchData, 10000);
+      pollRef.current = setInterval(fetchData, POLL_INTERVAL_MS);
     }
 
     return () => {
@@ -942,10 +1079,14 @@ export default function ParametroDetalles({ datas, title, parametro }) {
             </button>
             
             <button
+              onClick={exportCSV}
+              disabled={!(filteredData && filteredData.length) && !(data && data.length)}
               style={{
                 ...styles.actionButton,
                 background: `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`,
-                color: 'white'
+                color: 'white',
+                opacity: (!(filteredData && filteredData.length) && !(data && data.length)) ? 0.6 : 1,
+                cursor: (!(filteredData && filteredData.length) && !(data && data.length)) ? 'not-allowed' : 'pointer'
               }}
               className="action-button"
             >
@@ -1127,9 +1268,25 @@ export default function ParametroDetalles({ datas, title, parametro }) {
                     />
                   </div>
                 </div>
-                <p style={{ color: '#cbd5e1', fontSize: '12px', margin: 0 }}>
-                  Rango normal: {parametroConfig.rangosNormales}
-                </p>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button
+                    onClick={saveAlertThresholds}
+                    disabled={savingThresholds || (loadedThresholds && loadedThresholds.min === alertThresholds.min && loadedThresholds.max === alertThresholds.max)}
+                    style={{
+                      ...styles.actionButton,
+                      background: `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`,
+                      color: 'white',
+                      padding: '8px 12px',
+                      opacity: (savingThresholds || (loadedThresholds && loadedThresholds.min === alertThresholds.min && loadedThresholds.max === alertThresholds.max)) ? 0.6 : 1,
+                      cursor: (savingThresholds || (loadedThresholds && loadedThresholds.min === alertThresholds.min && loadedThresholds.max === alertThresholds.max)) ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {savingThresholds ? 'Guardando...' : 'Guardar umbrales'}
+                  </button>
+                  {thresholdSaved && <span style={{ color: '#34d399', marginLeft: '8px' }}>Guardado</span>}
+                  {thresholdLoadError && <span style={{ color: '#f87171' }}>Error cargando umbrales</span>}
+                </div>
               </div>
             )}
             {/* Estadísticas a mostrar */}
@@ -1181,7 +1338,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
             <div style={styles.toolbarRight}>
               <span>Mostrando {filteredData.length} registros</span>
               <span>•</span>
-              <span>Actualizado: {new Date().toLocaleTimeString('es-ES')}</span>
+              <span>Actualizado: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString('es-ES') : '—'}</span>
             </div>
           </div>
           {/* Área del gráfico */}
@@ -1200,7 +1357,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
                   Visualización de datos históricos de {parametroConfig.nombreCompleto.toLowerCase()}
                 </p>
               </div>
-              <ResponsiveContainer width="100%" height="85%">
+              <ResponsiveContainer width="100%" height={400}>
                 {renderChart()}
               </ResponsiveContainer>
             </div>

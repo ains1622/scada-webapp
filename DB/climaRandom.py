@@ -20,7 +20,7 @@ def generar_dato():
         "humedad": round(random.uniform(20, 100), 2),
         "presion": round(random.uniform(980, 1050), 2),
         "v_viento": round(random.uniform(0, 20), 2),
-        "d_viento": random.choice(["N", "S", "E", "W", "NE", "NW", "SE", "SW"]),
+        "d_viento": round(random.uniform(0, 360), 2),
         "indiceUV": round(random.uniform(0, 12), 2),
         "timestamp": datetime.now()
     }
