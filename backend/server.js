@@ -131,6 +131,23 @@ app.put('/alertas/:param', express.json(), async (req, res) => {
   }
 });
 
+// Endpoint para recibir paquetes SV desde el bridge UDP->HTTP
+app.post('/api/sv', express.json(), (req, res) => {
+  try {
+    const payload = req.body;
+    console.log('Received SV payload:', JSON.stringify(payload));
+
+    // Emitir via socket.io para clientes conectados (si aplicable)
+    io.emit('sv_update', payload);
+
+    // Responder OK
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error handling /api/sv payload', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 server.listen(4000, "0.0.0.0", () => {
   console.log(`Servidor corriendo en el puerto 4000`);
 });

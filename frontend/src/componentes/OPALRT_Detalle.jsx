@@ -390,15 +390,37 @@ export default function OpalDetalles({ opalData, title }) {
     },
     main: {
       display: 'flex',
+      flexDirection: 'column',
       height: 'calc(100vh - 96px)'
     },
+    // sidebar styles kept for reference but top filters are the primary UI now
     sidebar: {
-      width: '350px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(10px)',
-      borderRight: '1px solid rgba(255, 255, 255, 0.2)',
-      padding: '24px',
-      overflowY: 'auto'
+      display: 'none'
+    },
+    topFilters: {
+      width: '100%',
+      background: 'rgba(255, 255, 255, 0.03)',
+      border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: '12px',
+      padding: '12px 16px',
+      margin: '12px 24px',
+      boxSizing: 'border-box'
+    },
+    topFiltersHeader: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: '8px'
+    },
+    topFiltersGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+      gap: '12px'
+    },
+    dateRangeRow: {
+      display: 'flex',
+      gap: '8px',
+      alignItems: 'center'
     },
     sidebarHeader: {
       display: 'flex',
@@ -641,6 +663,18 @@ export default function OpalDetalles({ opalData, title }) {
         .action-button:hover {
           transform: translateY(-2px);
         }
+        /* Responsive for top filters */
+        .top-filters-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+        .top-filters-header { display: flex; align-items: center; justify-content: space-between; }
+        .date-range { display: flex; gap: 8px; align-items: center; }
+
+        @media (max-width: 700px) {
+          .top-filters-grid { grid-template-columns: 1fr !important; }
+          .top-filters-header { flex-direction: column; align-items: flex-start; gap: 8px; }
+          .date-range { flex-direction: column; align-items: stretch; }
+          .date-range input[type="datetime-local"] { width: 100% !important; }
+          .chart-type-button, .action-button { padding: 10px 12px; font-size: 13px; }
+        }
       `}</style>
 
       {/* Header */}
@@ -702,177 +736,136 @@ export default function OpalDetalles({ opalData, title }) {
       </div>
 
       <div style={styles.main}>
-        {/* Sidebar */}
+        {/* Top filters */}
         {showFilters && (
-          <div style={styles.sidebar}>
-            <div style={styles.sidebarHeader}>
-              <h2 style={styles.sidebarTitle}>
+          <div style={styles.topFilters} className="top-filters-grid">
+            <div style={styles.topFiltersHeader} className="top-filters-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <Filter style={{ width: '20px', height: '20px' }} />
-                Configuración
-              </h2>
-            </div>
-
-            {/* Selector de tipo de gráfico */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Tipo de Visualización</label>
-              <div style={styles.chartTypeGrid}>
-                {[
-                  { type: 'line', icon: TrendingUp, label: 'Líneas' },
-                  { type: 'area', icon: Activity, label: 'Área' },
-                  { type: 'bar', icon: BarChart3, label: 'Barras' },
-                  { type: 'scatter', icon: Settings, label: 'Puntos' }
-                ].map(({ type, icon: Icon, label }) => (
-                  <button
-                    key={type}
-                    onClick={() => setChartType(type)}
-                    style={{
-                      ...styles.chartTypeButton,
-                      background: chartType === type 
-                        ? 'linear-gradient(135deg, #6b73ff, #8b5cf6)' 
-                        : 'rgba(255, 255, 255, 0.1)',
-                      color: 'white'
-                    }}
-                    className="chart-type-button"
-                  >
-                    <Icon style={{ width: '16px', height: '16px' }} />
-                    <span>{label}</span>
-                  </button>
-                ))}
+                <div>
+                  <div style={{ fontSize: '16px', fontWeight: 600, color: 'white' }}>Configuración</div>
+                  <div style={{ color: '#cbd5e1', fontSize: '12px' }}>{selectedMetrics.length} métricas seleccionadas</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  onClick={() => {
+                    setDateRange({ start: '', end: '' });
+                    setSelectedMetrics(availableMetrics.slice(0, 3));
+                  }}
+                  style={{
+                    ...styles.actionButton,
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    color: 'white',
+                    padding: '8px 12px'
+                  }}
+                  className="action-button"
+                >
+                  Resetear
+                </button>
+                <button
+                  onClick={() => setSelectedMetrics(availableMetrics)}
+                  style={{
+                    ...styles.actionButton,
+                    background: 'linear-gradient(135deg, #6b73ff, #8b5cf6)',
+                    color: 'white',
+                    padding: '8px 12px'
+                  }}
+                  className="action-button"
+                >
+                  Seleccionar Todas
+                </button>
               </div>
             </div>
 
-            {/* Selector de métricas */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>
-                Métricas ({selectedMetrics.length} seleccionadas)
-              </label>
-              <div style={styles.metricsList}>
-                {availableMetrics.map((metric) => {
-                  const config = metricsConfig[metric] || { 
-                    label: metric, 
-                    unit: '', 
-                    color: '#8884d8', 
-                    icon: '📊',
-                    gradient: 'linear-gradient(135deg, #8884d8, #6366f1)'
-                  };
-                  return (
-                    <div
-                      key={metric}
-                      style={styles.metricItem}
-                      className="metric-item"
-                      onClick={() => toggleMetric(metric)}
+            <div style={styles.topFiltersGrid}>
+              <div>
+                <label style={styles.sectionLabel}>Tipo de Visualización</label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {[
+                    { type: 'line', icon: TrendingUp, label: 'Líneas' },
+                    { type: 'area', icon: Activity, label: 'Área' },
+                    { type: 'bar', icon: BarChart3, label: 'Barras' },
+                    { type: 'scatter', icon: Settings, label: 'Puntos' }
+                  ].map(({ type, icon: Icon, label }) => (
+                    <button
+                      key={type}
+                      onClick={() => setChartType(type)}
+                      style={{
+                        ...styles.chartTypeButton,
+                        background: chartType === type 
+                          ? 'linear-gradient(135deg, #6b73ff, #8b5cf6)' 
+                          : 'rgba(255, 255, 255, 0.1)',
+                        color: 'white'
+                      }}
+                      className="chart-type-button"
                     >
-                      <div style={{
-                        ...styles.metricIcon,
-                        background: config.gradient
-                      }}>
-                        {config.icon}
-                      </div>
-                      <div style={styles.metricInfo}>
-                        <p style={styles.metricLabel}>{config.label}</p>
-                        <p style={styles.metricUnit}>{config.unit}</p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={selectedMetrics.includes(metric)}
-                        onChange={() => toggleMetric(metric)}
-                        style={styles.checkbox}
-                      />
-                    </div>
-                  );
-                })}
+                      <Icon style={{ width: '16px', height: '16px' }} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {/* Filtro de fecha */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>
-                <Calendar style={{ width: '16px', height: '16px', display: 'inline', marginRight: '8px' }} />
-                Rango de Fechas
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <input
-                  type="datetime-local"
-                  value={dateRange.start}
-                  onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                  style={styles.input}
-                />
-                <input
-                  type="datetime-local"
-                  value={dateRange.end}
-                  onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                  style={styles.input}
-                />
+              <div>
+                <label style={styles.sectionLabel}><Calendar style={{ width: '16px', height: '16px', display: 'inline', marginRight: '8px' }} /> Rango de Fechas</label>
+                <div style={styles.dateRangeRow} className="date-range">
+                  <input
+                    type="datetime-local"
+                    value={dateRange.start}
+                    onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                    style={{ ...styles.input, width: 'calc(50% - 6px)' }}
+                  />
+                  <input
+                    type="datetime-local"
+                    value={dateRange.end}
+                    onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                    style={{ ...styles.input, width: 'calc(50% - 6px)' }}
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* Agregación temporal */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Agregación Temporal</label>
-              <select
-                value={timeAggregation}
-                onChange={(e) => setTimeAggregation(e.target.value)}
-                style={styles.select}
-              >
-                <option value="minute">Por minuto</option>
-                <option value="hour">Por hora</option>
-                <option value="day">Por día</option>
-                <option value="week">Por semana</option>
-              </select>
-            </div>
+              <div>
+                <label style={styles.sectionLabel}>Agregación Temporal</label>
+                <select
+                  value={timeAggregation}
+                  onChange={(e) => setTimeAggregation(e.target.value)}
+                  style={styles.select}
+                >
+                  <option value="minute">Por minuto</option>
+                  <option value="hour">Por hora</option>
+                  <option value="day">Por día</option>
+                  <option value="week">Por semana</option>
+                </select>
+              </div>
 
-            {/* Estadísticas */}
-            <div style={styles.statsCard}>
-              <h3 style={styles.statsTitle}>Estadísticas del Sistema</h3>
-              <div style={styles.statRow}>
-                <span style={styles.statLabel}>Puntos de datos:</span>
-                <span style={styles.statValue}>{filteredData.length.toLocaleString()}</span>
+              <div>
+                <label style={styles.sectionLabel}>Métricas</label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {availableMetrics.map((metric) => {
+                    const config = metricsConfig[metric] || { 
+                      label: metric, 
+                      color: '#8884d8'
+                    };
+                    return (
+                      <button
+                        key={metric}
+                        onClick={() => toggleMetric(metric)}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: '999px',
+                          background: selectedMetrics.includes(metric) ? (config.gradient || config.color) : 'rgba(255,255,255,0.04)',
+                          color: 'white',
+                          border: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {config.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div style={styles.statRow}>
-                <span style={styles.statLabel}>Métricas activas:</span>
-                <span style={styles.statValue}>{selectedMetrics.length}/{availableMetrics.length}</span>
-              </div>
-              <div style={styles.statRow}>
-                <span style={styles.statLabel}>Tipo de gráfico:</span>
-                <span style={styles.statValue}>{chartType}</span>
-              </div>
-              <div style={styles.statRow}>
-                <span style={styles.statLabel}>Estado del sistema:</span>
-                <span style={{ ...styles.statValue, color: '#22c55e' }}>Activo</span>
-              </div>
-            </div>
-
-            {/* Botones de acción */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-              <button 
-                onClick={() => {
-                  setDateRange({ start: '', end: '' });
-                  setSelectedMetrics(availableMetrics.slice(0, 3));
-                }}
-                style={{
-                  ...styles.actionButton,
-                  background: 'rgba(255, 255, 255, 0.1)',
-                  color: 'white',
-                  justifyContent: 'center',
-                  width: '100%'
-                }}
-                className="action-button"
-              >
-                Resetear Filtros
-              </button>
-              <button 
-                onClick={() => setSelectedMetrics(availableMetrics)}
-                style={{
-                  ...styles.actionButton,
-                  background: 'linear-gradient(135deg, #6b73ff, #8b5cf6)',
-                  color: 'white',
-                  justifyContent: 'center',
-                  width: '100%'
-                }}
-                className="action-button"
-              >
-                Seleccionar Todas
-              </button>
             </div>
           </div>
         )}

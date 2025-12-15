@@ -1,3 +1,4 @@
+# DB Docketfile
 FROM postgres:latest
 
 # Variables de entorno

@@ -1,4 +1,5 @@
 import React from "react";
+import { RecoilRoot } from 'recoil';
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import ClimaDashboard from "./componentes/ClimaDashboard";
 import OpalDetalles from "./componentes/OPALRT_Detalle";
@@ -7,6 +8,7 @@ import ParametroDetalles from "./componentes/ParametroDetalles";
 
 function App() {
   return (
+    <RecoilRoot>
     <Router>
       <Routes>
         <Route path="/clima" element={<ClimaDashboard />} />
@@ -74,6 +76,7 @@ function App() {
         <Route path="*" element={<ClimaDashboard />} />
       </Routes>
     </Router>
+    </RecoilRoot>
   );
 }
 export default App;

@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useRecoilState } from 'recoil';
+import { paramDataState, alertThresholdsState, lastUpdateState, autoRefreshState } from '../state/parametroState';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, RadialBarChart, RadialBar, PolarAngleAxis } from 'recharts';
-import { Filter, Calendar, TrendingUp, BarChart3, Activity, Download, Settings, RefreshCw, ArrowLeft, Eye, EyeOff, Thermometer, TrendingDown, AlertTriangle, Zap, Gauge, Wind, Navigation, Sun, Droplets } from 'lucide-react';
+import { TrendingUp, BarChart3, Activity, Download, RefreshCw, ArrowLeft, Eye, EyeOff, Thermometer, AlertTriangle, Zap, Gauge, Wind, Navigation, Sun, Droplets } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 export default function ParametroDetalles({ datas, title, parametro }) {
   // Estados para filtros y configuración
@@ -8,14 +10,16 @@ export default function ParametroDetalles({ datas, title, parametro }) {
   const [chartType, setChartType] = useState('line');
   const [timeAggregation, setTimeAggregation] = useState('hour');
   const [showFilters, setShowFilters] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useRecoilState(autoRefreshState(parametro));
   const [showStats, setShowStats] = useState(['actual', 'minMax', 'promedio']);
-  const [data, setData] = useState([]);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [alertThresholds, setAlertThresholds] = useState(() => {
-    // Valores por defecto según el parámetro
+  // local state mirrors Recoil atom for data — use Recoil for shared multi-views
+  const [localData, setLocalData] = useRecoilState(paramDataState(parametro));
+  const data = useMemo(() => (localData && Array.isArray(localData) ? localData : []), [localData]);
+  const setData = setLocalData;
+  const [lastUpdate, setLastUpdate] = useRecoilState(lastUpdateState(parametro));
+  const [, setIsLoading] = useState(false);
+  const [, setError] = useState(null);
+  const getDefaultThresholds = (param) => {
     const defaults = {
       humedad: { min: 30, max: 80 },
       presion: { min: 980, max: 1050 },
@@ -24,18 +28,19 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       indice_uv: { min: 0, max: 11 },
       temperatura: { min: 10, max: 35 }
     };
-    return defaults[parametro] || defaults.temperatura;
-  });
+    return defaults[param] || defaults.temperatura;
+  };
+  const [savedThresholds, setSavedThresholds] = useRecoilState(alertThresholdsState(parametro));
+  const [editThresholds, setEditThresholds] = useState(() => getDefaultThresholds(parametro));
+  const currentThresholds = editThresholds ?? savedThresholds ?? getDefaultThresholds(parametro);
   const [savingThresholds, setSavingThresholds] = useState(false);
   const [thresholdLoadError, setThresholdLoadError] = useState(null);
-  const [loadedThresholds, setLoadedThresholds] = useState(null); // umbrales tal como vienen de la BD
+  // loadedThresholds no necesario ahora (guardamos en Recoil)
   const [thresholdSaved, setThresholdSaved] = useState(false);
   const navigate = useNavigate();
   const handleVolver = () => {
     navigate('/clima');
   };
-
-  
 
   // Configuración específica para cada parámetro
   const parametroConfig = useMemo(() => {
@@ -91,68 +96,12 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     };
     return configs[parametro] || configs.temperatura;
   }, [parametro]);
-  const IconoParametro = parametroConfig.icono;
-  // Datos de ejemplo para demostración (en caso de que no haya datos)
-  const sampleData = useMemo(() => {
-    if (data && Array.isArray(data)) return data;
-    
-    // Generar datos de ejemplo con patrones realistas según el parámetro
-    const now = new Date();
-    return Array.from({ length: 200 }, (_, i) => {
-      const date = new Date(now.getTime() - (200 - i) * 60 * 60 * 1000);
-      const hourOfDay = date.getHours();
-      
-      let valorPrincipal;
-      
-      // Patrones específicos para cada parámetro
-      switch(parametro) {
-        case 'humedad':
-          const dailyPatternHumedad = 60 - Math.sin((hourOfDay - 6) * Math.PI / 12) * 20;
-          valorPrincipal = dailyPatternHumedad + Math.sin(i * 0.03) * 10 + (Math.random() * 6 - 3);
-          break;
-          
-        case 'presion':
-          valorPrincipal = 1015 + Math.sin(i * 0.05) * 15 + (Math.random() * 4 - 2);
-          break;
-          
-        case 'v_viento':
-          const baseViento = 10 + Math.sin(i * 0.1) * 8;
-          valorPrincipal = baseViento + Math.random() * 5;
-          break;
-          
-        case 'd_viento':
-          valorPrincipal = (Math.sin(i * 0.05) * 180 + 180) % 360;
-          break;
-          
-        case 'indiceuv':
-          const uvPattern = 5 + Math.sin((hourOfDay - 12) * Math.PI / 12) * 4;
-          valorPrincipal = Math.max(0, uvPattern + Math.sin(i * 0.02) * 2 + (Math.random() * 1.5 - 0.75));
-          break;
-          
-        default: // temperatura
-          const dailyPattern = 25 + Math.sin((hourOfDay - 6) * Math.PI / 12) * 8;
-          const seasonal = Math.sin(i * 0.02) * 3;
-          valorPrincipal = dailyPattern + seasonal + (Math.random() * 4 - 2);
-      }
-      
-      return {
-        timestamp: date.toISOString(),
-        time: date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-        date: date.toLocaleDateString('es-ES'),
-        fullDate: date.toLocaleDateString('es-ES', { 
-          weekday: 'short', 
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric' 
-        }),
-        // sólo la métrica principal
-        [parametroConfig.metricaPrincipal]: Math.round(valorPrincipal * 100) / 100,
-        isAlert: parametro === 'direccion_viento' 
-          ? false
-          : valorPrincipal < alertThresholds.min || valorPrincipal > alertThresholds.max
-      };
-    });
-  }, [data, parametro, alertThresholds, parametroConfig]);
+
+  // Icono principal para este parámetro (componente de lucide-react)
+  const IconoParametro = parametroConfig.icono || Thermometer;
+
+            
+  // sampleData removed: not used currently, keep codebase smaller and avoid lint warnings
   // Ref para el interval ID
   const pollRef = useRef(null);
   // Poll interval (ms) - cambiar aquí para ajustar la frecuencia de fetch
@@ -170,11 +119,9 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         const json = await res.json();
         if (!mounted) return;
         if (json && (json.min !== null || json.max !== null)) {
-          setAlertThresholds({
-            min: Number(json.min ?? alertThresholds.min),
-            max: Number(json.max ?? alertThresholds.max)
-          });
-          setLoadedThresholds({ min: Number(json.min ?? alertThresholds.min), max: Number(json.max ?? alertThresholds.max) });
+          const vals = { min: Number(json.min ?? getDefaultThresholds(parametro).min), max: Number(json.max ?? getDefaultThresholds(parametro).max) };
+          setSavedThresholds(vals);
+          setEditThresholds(vals);
         }
       } catch (err) {
         if (!mounted) return;
@@ -186,11 +133,16 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     return () => { mounted = false; };
   }, [parametro]); // eslint-disable-line
 
+  // mantener editThresholds sincronizados con savedThresholds cuando cambien
+  useEffect(() => {
+    if (savedThresholds) setEditThresholds(savedThresholds);
+  }, [savedThresholds]);
+
   // Guardar/actualizar umbrales en backend
   const saveAlertThresholds = async () => {
     try {
       setSavingThresholds(true);
-      const body = { min: Number(alertThresholds.min), max: Number(alertThresholds.max) };
+      const body = { min: Number(editThresholds.min), max: Number(editThresholds.max) };
       const res = await fetch(`${API_BASE.replace(/\/+$/, '')}/alertas/${encodeURIComponent(parametro)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -201,7 +153,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         throw new Error(txt || 'Error guardando umbrales');
       }
       // actualizar estado local con los valores guardados
-      setLoadedThresholds({ min: Number(body.min), max: Number(body.max) });
+      setSavedThresholds({ min: Number(body.min), max: Number(body.max) });
       setThresholdSaved(true);
       setTimeout(() => setThresholdSaved(false), 2000);
     } catch (err) {
@@ -371,10 +323,10 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         // Agregación
         const aggregated = aggregateData(filtered, timeAggregation, metricKey);
 
-        // Añadir campos auxiliares y flags de alerta
+        // Añadir campos auxiliares y flags de alerta (usar thresholds editados si existen)
         const enriched = aggregated.map((it) => ({
           ...it,
-          isAlert: parametro !== 'd_viento' && typeof it[metricKey] === 'number' && (it[metricKey] < alertThresholds.min || it[metricKey] > alertThresholds.max)
+          isAlert: parametro !== 'd_viento' && typeof it[metricKey] === 'number' && (it[metricKey] < (currentThresholds?.min ?? getDefaultThresholds(parametro).min) || it[metricKey] > (currentThresholds?.max ?? getDefaultThresholds(parametro).max))
         }));
 
         // Eliminar puntos con valor null por seguridad (recharts ignora nulls)
@@ -404,7 +356,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         pollRef.current = null;
       }
     };
-  }, [dateRange.start, dateRange.end, timeAggregation, parametro, autoRefresh, parametroConfig, alertThresholds]);
+  }, [dateRange.start, dateRange.end, timeAggregation, parametro, autoRefresh, parametroConfig, editThresholds, API_BASE, currentThresholds, setData, setLastUpdate]);
   // Filtrar datos según criterios
   const filteredData = useMemo(() => {
     if (!data || !Array.isArray(data)) return [];
@@ -524,7 +476,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         }
       }
     });
-    const maxValue = Math.max(...directionSectors.map(s => s.value));
+    // maxValue not required currently
     return (
       <RadialBarChart 
         width={500} 
@@ -828,30 +780,9 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     },
     main: {
       display: 'flex',
-      height: 'calc(100vh - 96px)'
-    },
-    sidebar: {
-      width: '350px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(10px)',
-      borderRight: '1px solid rgba(255, 255, 255, 0.2)',
-      padding: '24px',
-      overflowY: 'auto'
-    },
-    sidebarHeader: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: '24px'
-    },
-    sidebarTitle: {
-      fontSize: '18px',
-      fontWeight: '600',
-      color: 'white',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      margin: 0
+      flexDirection: 'column',
+      height: 'calc(100vh - 96px)',
+      overflow: 'hidden'
     },
     section: {
       marginBottom: '24px'
@@ -946,7 +877,9 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     content: {
       flex: 1,
       display: 'flex',
-      flexDirection: 'column'
+      flexDirection: 'column',
+      overflow: 'auto',
+      boxSizing: 'border-box'
     },
     toolbar: {
       background: 'rgba(255, 255, 255, 0.1)',
@@ -966,7 +899,8 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     },
     chartArea: {
       flex: 1,
-      padding: '24px'
+      padding: '24px',
+      overflow: 'auto'
     },
     chartContainer: {
       height: '100%',
@@ -975,6 +909,26 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       borderRadius: '24px',
       padding: '24px',
       border: '1px solid rgba(255, 255, 255, 0.2)'
+    },
+    topFilters: {
+      width: '100%',
+      background: 'rgba(255, 255, 255, 0.04)',
+      border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: '16px',
+      padding: '16px',
+      margin: '12px 24px',
+      boxSizing: 'border-box'
+    },
+    topFiltersHeader: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: '12px'
+    },
+    topFiltersGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+      gap: '12px'
     },
     chartHeader: {
       marginBottom: '20px'
@@ -994,45 +948,34 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       color: parametroConfig.color
     }
   };
-  return (
+
+  // Fin de estilos
+        
+          return (
     <div style={styles.container}>
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
         }
-        
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        
-        .filter-button:hover {
-          background-color: rgba(255, 255, 255, 0.15);
-          transform: translateY(-2px);
-        }
-        
-        .chart-type-button:hover {
-          transform: translateY(-1px);
-        }
-        
-        .action-button:hover {
-          transform: translateY(-2px);
-        }
-        
-        input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-          filter: invert(1);
-        }
-        
-        select option {
-          background-color: #1f2937;
-          color: white;
-        }
-        
-        input:focus, select:focus {
-          outline: none;
-          border-color: ${parametroConfig.color};
-          box-shadow: 0 0 0 3px ${parametroConfig.color}33;
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .filter-button:hover { background-color: rgba(255, 255, 255, 0.15); transform: translateY(-2px); }
+        .chart-type-button:hover { transform: translateY(-1px); }
+        .action-button:hover { transform: translateY(-2px); }
+        input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        select option { background-color: #1f2937; color: white; }
+        input:focus, select:focus { outline: none; }
+        /* Responsive adjustments for top filters */
+        .top-filters-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+        .top-filters-header { display: flex; align-items: center; justify-content: space-between; }
+        .date-range { display: flex; gap: 8px; align-items: center; }
+
+        @media (max-width: 700px) {
+          .top-filters-grid { grid-template-columns: 1fr !important; }
+          .top-filters-header { flex-direction: column; align-items: flex-start; gap: 8px; }
+          .date-range { flex-direction: column; align-items: stretch; }
+          .date-range input[type="datetime-local"] { width: 100% !important; }
+          .chart-type-button, .action-button { padding: 10px 12px; font-size: 13px; }
         }
       `}</style>
       {/* Header */}
@@ -1044,283 +987,177 @@ export default function ParametroDetalles({ datas, title, parametro }) {
               <span>Volver</span>
             </button>
             <div>
-              <h1 style={styles.title}>
-                {title || `Análisis Histórico - ${parametroConfig.nombreCompleto}`}
-              </h1>
-              <p style={styles.subtitle}>
-                Monitoreo detallado de {parametroConfig.nombreCompleto.toLowerCase()}
-              </p>
+              <h1 style={styles.title}>{title || `Análisis Histórico - ${parametroConfig.nombreCompleto}`}</h1>
+              <p style={styles.subtitle}>Monitoreo detallado de {parametroConfig.nombreCompleto.toLowerCase()}</p>
             </div>
           </div>
-          
           <div style={styles.headerRight}>
             <div style={styles.liveIndicator}>
               <div style={styles.liveDot}></div>
               <span style={styles.liveText}>Sensor activo</span>
             </div>
-            
-            <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              style={{
-                ...styles.actionButton,
-                background: autoRefresh 
-                  ? 'linear-gradient(135deg, #22c55e, #16a34a)' 
-                  : 'rgba(255, 255, 255, 0.1)',
-                color: 'white'
-              }}
-              className="action-button"
-            >
-              <RefreshCw style={{ 
-                width: '16px', 
-                height: '16px',
-                animation: autoRefresh ? 'spin 2s linear infinite' : 'none'
-              }} />
+            <button onClick={() => setAutoRefresh(!autoRefresh)} style={{ ...styles.actionButton, background: autoRefresh ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'rgba(255, 255, 255, 0.1)', color: 'white' }} className="action-button">
+              <RefreshCw style={{ width: '16px', height: '16px', animation: autoRefresh ? 'spin 2s linear infinite' : 'none' }} />
               <span>Auto-actualizar</span>
             </button>
-            
-            <button
-              onClick={exportCSV}
-              disabled={!(filteredData && filteredData.length) && !(data && data.length)}
-              style={{
-                ...styles.actionButton,
-                background: `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`,
-                color: 'white',
-                opacity: (!(filteredData && filteredData.length) && !(data && data.length)) ? 0.6 : 1,
-                cursor: (!(filteredData && filteredData.length) && !(data && data.length)) ? 'not-allowed' : 'pointer'
-              }}
-              className="action-button"
-            >
+            <button onClick={exportCSV} disabled={!(filteredData && filteredData.length) && !(data && data.length)} style={{ ...styles.actionButton, background: `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`, color: 'white', opacity: (!(filteredData && filteredData.length) && !(data && data.length)) ? 0.6 : 1, cursor: (!(filteredData && filteredData.length) && !(data && data.length)) ? 'not-allowed' : 'pointer' }} className="action-button">
               <Download style={{ width: '16px', height: '16px' }} />
               <span>Exportar</span>
             </button>
           </div>
         </div>
       </div>
+
       <div style={styles.main}>
-        {/* Sidebar */}
-        {showFilters && (
-          <div style={styles.sidebar}>
-            <div style={styles.sidebarHeader}>
-              <h2 style={styles.sidebarTitle}>
-                <IconoParametro style={{ width: '20px', height: '20px' }} />
-                {parametroConfig.nombreCompleto}
-              </h2>
-            </div>
-            {/* Estadísticas principales */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Estado Actual del Sistema</label>
-              <div style={styles.statsGrid}>
-                <div style={styles.statCard}>
-                  <p style={styles.statValue}>{stats.current?.toFixed(1)}{parametroConfig.unidad}</p>
-                  <p style={styles.statLabel}>Actual</p>
-                </div>
-                <div style={styles.statCard}>
-                  <p style={styles.statValue}>{stats.avg?.toFixed(1)}{parametroConfig.unidad}</p>
-                  <p style={styles.statLabel}>Promedio</p>
-                </div>
-                <div style={styles.statCard}>
-                  <p style={styles.statValue}>{stats.min?.toFixed(1)}{parametroConfig.unidad}</p>
-                  <p style={styles.statLabel}>Mínima</p>
-                </div>
-                <div style={styles.statCard}>
-                  <p style={styles.statValue}>{stats.max?.toFixed(1)}{parametroConfig.unidad}</p>
-                  <p style={styles.statLabel}>Máxima</p>
-                </div>
-              </div>
-              {/* Alertas */}
-              {stats.alerts > 0 && parametro !== 'direccion_viento' && (
-                <div style={styles.alertsCard}>
-                  <h3 style={styles.alertTitle}>
-                    <AlertTriangle style={{ width: '16px', height: '16px' }} />
-                    Alertas de {parametroConfig.nombreCompleto}
-                  </h3>
-                  <p style={{ color: '#fbbf24', fontSize: '14px', margin: 0 }}>
-                    {stats.alerts} eventos fuera del rango normal detectados
-                  </p>
-                </div>
-              )}
-              {/* Tendencia */}
-              {parametro !== 'direccion_viento' && (
-                <div style={{
-                  ...styles.statCard,
-                  background: stats.trend > 0 
-                    ? `linear-gradient(135deg, ${parametroConfig.color}22, ${parametroConfig.color}44)`
-                    : 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(6, 182, 212, 0.1))',
-                  border: `1px solid ${stats.trend > 0 ? `${parametroConfig.color}66` : 'rgba(59, 130, 246, 0.2)'}`
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                    {stats.trend > 0 ? (
-                      <TrendingUp style={{ width: '16px', height: '16px', color: parametroConfig.color }} />
-                    ) : (
-                      <TrendingDown style={{ width: '16px', height: '16px', color: '#3b82f6' }} />
-                    )}
-                    <p style={styles.statValue}>
-                      {Math.abs(stats.trend)?.toFixed(1)}{parametroConfig.unidad}
-                    </p>
+        {/* Contenido principal */}
+        <div style={styles.content}>
+          {showFilters && (
+            <div style={styles.topFilters}>
+              <div style={styles.topFiltersHeader} className="top-filters-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <IconoParametro style={{ width: '20px', height: '20px' }} />
+                  <div>
+                    <div style={{ fontSize: '16px', fontWeight: 600, color: 'white' }}>{parametroConfig.nombreCompleto}</div>
+                    <div style={{ color: '#cbd5e1', fontSize: '12px' }}>{parametroConfig.rangosNormales}</div>
                   </div>
-                  <p style={styles.statLabel}>
-                    Tendencia {stats.trend > 0 ? 'ascendente' : 'descendente'}
-                  </p>
                 </div>
-              )}
-            </div>
-            {/* Selector de tipo de gráfico */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Tipo de Visualización</label>
-              <div style={styles.chartTypeGrid}>
-                {[
-                  { type: 'line', icon: TrendingUp, label: 'Línea' },
-                  { type: 'area', icon: Activity, label: 'Área' },
-                  { type: 'bar', icon: BarChart3, label: 'Barras' },
-                  { type: 'composed', icon: Zap, label: 'Combinado' }
-                ].map((item) => {
-                  const IconComponent = item.icon;
-                  return (
-                    <button
-                      key={item.type}
-                      onClick={() => setChartType(item.type)}
-                      style={{
-                        ...styles.chartTypeButton,
-                        background: chartType === item.type
-                          ? `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`
-                          : 'rgba(255, 255, 255, 0.1)',
-                        color: 'white',
-                        border: chartType === item.type 
-                          ? `1px solid ${parametroConfig.color}66` 
-                          : '1px solid rgba(255, 255, 255, 0.1)'
-                      }}
-                      className="chart-type-button"
-                    >
-                      <IconComponent style={{ width: '16px', height: '16px' }} />
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            {/* Filtros de fecha */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Rango de Fechas</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '4px' }}>
-                    Desde
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={dateRange.start}
-                    onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
-                    style={styles.input}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '4px' }}>
-                    Hasta
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={dateRange.end}
-                    onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
-                    style={styles.input}
-                  />
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  {stats.alerts > 0 && parametro !== 'direccion_viento' && (
+                    <div style={styles.alertsCard}>
+                      <AlertTriangle style={{ width: '16px', height: '16px' }} />
+                      <span style={{ marginLeft: '6px' }}>{stats.alerts} alertas</span>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-            {/* Agregación temporal */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Agrupación Temporal</label>
-              <select
-                value={timeAggregation}
-                onChange={(e) => setTimeAggregation(e.target.value)}
-                style={styles.select}
-              >
-                <option value="raw">Datos sin procesar</option>
-                <option value="minute">Por minuto</option>
-                <option value="hour">Por hora</option>
-                <option value="day">Por día</option>
-              </select>
-            </div>
-            {/* Configuración de alertas */}
-            {parametro !== 'direccion_viento' && (
-              <div style={styles.section}>
-                <label style={styles.sectionLabel}>Umbrales de Alerta</label>
-                <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '4px' }}>
-                      Mínima ({parametroConfig.unidad})
-                    </label>
+
+              <div style={styles.topFiltersGrid} className="top-filters-grid">
+                <div>
+                  <label style={styles.sectionLabel}>Tipo de Visualización</label>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {[
+                      { type: 'line', icon: TrendingUp, label: 'Línea' },
+                      { type: 'area', icon: Activity, label: 'Área' },
+                      { type: 'bar', icon: BarChart3, label: 'Barras' },
+                      { type: 'composed', icon: Zap, label: 'Combinado' }
+                    ].map((item) => {
+                      const IconComponent = item.icon;
+                      return (
+                        <button
+                          key={item.type}
+                          onClick={() => setChartType(item.type)}
+                          style={{
+                            ...styles.chartTypeButton,
+                            background: chartType === item.type
+                              ? `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`
+                              : 'rgba(255, 255, 255, 0.1)'
+                          }}
+                          className="chart-type-button"
+                        >
+                          <IconComponent style={{ width: '16px', height: '16px' }} />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ gridColumn: '1', justifySelf: 'start' }}>
+                  <label style={styles.sectionLabel}>Rango de Fechas</label>
+                  <div className="date-range" style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-start' }}>
                     <input
-                      type="number"
-                      value={alertThresholds.min}
-                      onChange={(e) => setAlertThresholds({...alertThresholds, min: Number(e.target.value)})}
-                      style={styles.input}
+                      type="datetime-local"
+                      value={dateRange.start}
+                      onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
+                      style={{ ...styles.input, width: 'calc(50% - 6px)' }}
                     />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '4px' }}>
-                      Máxima ({parametroConfig.unidad})
-                    </label>
                     <input
-                      type="number"
-                      value={alertThresholds.max}
-                      onChange={(e) => setAlertThresholds({...alertThresholds, max: Number(e.target.value)})}
-                      style={styles.input}
+                      type="datetime-local"
+                      value={dateRange.end}
+                      onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
+                      style={{ ...styles.input, width: 'calc(50% - 6px)' }}
                     />
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                  <button
-                    onClick={saveAlertThresholds}
-                    disabled={savingThresholds || (loadedThresholds && loadedThresholds.min === alertThresholds.min && loadedThresholds.max === alertThresholds.max)}
-                    style={{
-                      ...styles.actionButton,
-                      background: `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`,
-                      color: 'white',
-                      padding: '8px 12px',
-                      opacity: (savingThresholds || (loadedThresholds && loadedThresholds.min === alertThresholds.min && loadedThresholds.max === alertThresholds.max)) ? 0.6 : 1,
-                      cursor: (savingThresholds || (loadedThresholds && loadedThresholds.min === alertThresholds.min && loadedThresholds.max === alertThresholds.max)) ? 'not-allowed' : 'pointer'
-                    }}
+                <div>
+                  <label style={styles.sectionLabel}>Agrupación Temporal</label>
+                  <select
+                    value={timeAggregation}
+                    onChange={(e) => setTimeAggregation(e.target.value)}
+                    style={styles.select}
                   >
-                    {savingThresholds ? 'Guardando...' : 'Guardar umbrales'}
-                  </button>
-                  {thresholdSaved && <span style={{ color: '#34d399', marginLeft: '8px' }}>Guardado</span>}
-                  {thresholdLoadError && <span style={{ color: '#f87171' }}>Error cargando umbrales</span>}
+                    <option value="raw">Datos sin procesar</option>
+                    <option value="minute">Por minuto</option>
+                    <option value="hour">Por hora</option>
+                    <option value="day">Por día</option>
+                  </select>
+                </div>
+
+                {parametro !== 'direccion_viento' && (
+                  <div>
+                    <label style={styles.sectionLabel}>Umbrales de Alerta</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        value={editThresholds?.min ?? getDefaultThresholds(parametro).min}
+                        onChange={(e) => setEditThresholds({...editThresholds, min: Number(e.target.value)})}
+                        style={{ ...styles.input, width: '110px' }}
+                      />
+                      <input
+                        type="number"
+                        value={editThresholds?.max ?? getDefaultThresholds(parametro).max}
+                        onChange={(e) => setEditThresholds({...editThresholds, max: Number(e.target.value)})}
+                        style={{ ...styles.input, width: '110px' }}
+                      />
+                      <button
+                        onClick={saveAlertThresholds}
+                        disabled={savingThresholds || (savedThresholds && savedThresholds.min === editThresholds.min && savedThresholds.max === editThresholds.max)}
+                        style={{
+                          ...styles.actionButton,
+                          background: `linear-gradient(135deg, ${parametroConfig.color}, ${parametroConfig.color}99)`,
+                          color: 'white',
+                          padding: '8px 12px'
+                        }}
+                      >
+                        {savingThresholds ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </div>
+                    {thresholdSaved && <div style={{ color: '#34d399', marginTop: '6px' }}>Guardado</div>}
+                    {thresholdLoadError && <div style={{ color: '#f87171', marginTop: '6px' }}>Error cargando umbrales</div>}
+                  </div>
+                )}
+
+                <div>
+                  <label style={styles.sectionLabel}>Estadísticas a Mostrar</label>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {[
+                      { id: 'actual', label: `Actual` },
+                      { id: 'minMax', label: 'Mín y Máx' },
+                      { id: 'promedio', label: 'Promedio' },
+                      { id: 'tendencia', label: 'Tendencia' }
+                    ].map((stat) => (
+                      <label key={stat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={showStats.includes(stat.id)}
+                          onChange={() => {
+                            if (showStats.includes(stat.id)) {
+                              setShowStats(showStats.filter(s => s !== stat.id));
+                            } else {
+                              setShowStats([...showStats, stat.id]);
+                            }
+                          }}
+                          style={{ width: '16px', height: '16px' }}
+                        />
+                        <span style={{ color: '#cbd5e1', fontSize: '14px' }}>{stat.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
-            )}
-            {/* Estadísticas a mostrar */}
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Estadísticas a Mostrar</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {[
-                  { id: 'actual', label: `Valor actual` },
-                  { id: 'minMax', label: 'Mínima y máxima' },
-                  { id: 'promedio', label: 'Promedio' },
-                  { id: 'tendencia', label: 'Tendencia' }
-                ].map((stat) => (
-                  <label key={stat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={showStats.includes(stat.id)}
-                      onChange={() => {
-                        if (showStats.includes(stat.id)) {
-                          setShowStats(showStats.filter(s => s !== stat.id));
-                        } else {
-                          setShowStats([...showStats, stat.id]);
-                        }
-                      }}
-                      style={{ width: '16px', height: '16px' }}
-                    />
-                    <span style={{ color: '#cbd5e1', fontSize: '14px' }}>{stat.label}</span>
-                  </label>
-                ))}
-              </div>
             </div>
-          </div>
-        )}
-        {/* Contenido principal */}
-        <div style={styles.content}>
+          )}
           {/* Barra de herramientas */}
           <div style={styles.toolbar}>
             <button
