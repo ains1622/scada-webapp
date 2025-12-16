@@ -27,18 +27,78 @@ export default function DashboardClima() {
     const socket = io(SOCKET_URL, { transports: ['websocket'] });
     const mounted = { current: true };
 
-    // Helper para normalizar puntos con timestamp
+    // Helper para normalizar puntos con timestamp y, para OPAL, extraer
+    // voltaje/corriente/potencia en propiedades planas que el gráfico espera.
     const makePoint = (payload) => {
-      // Si payload ya contiene timestamp, úsalo; si no, crea uno
-      return {
-        timestamp: payload.timestamp || new Date().toISOString(),
-        ...payload
-      };
+      const tsIso = payload?.timestamp
+        ? payload.timestamp
+        : payload?.timestamp_ms
+          ? new Date(Number(payload.timestamp_ms)).toISOString()
+          : new Date().toISOString();
+
+      // Preserve payload fields (so clima fields like temperatura are kept) and normalize timestamp
+      const point = { timestamp: tsIso, ...payload };
+
+      // Normalize voltaje/corriente/potencia if present
+      if (payload?.voltaje !== undefined || payload?.corriente !== undefined || payload?.potencia !== undefined) {
+        point.voltaje = payload.voltaje != null ? Number(payload.voltaje) : null;
+        point.corriente = payload.corriente != null ? Number(payload.corriente) : null;
+        point.potencia = payload.potencia != null ? Number(payload.potencia) : null;
+      } else {
+        // Si viene `values`, intentamos mapear a voltaje/corriente/potencia
+        const vals = payload?.values;
+        if (vals !== undefined) {
+          if (Array.isArray(vals)) {
+            point.voltaje = vals[0] != null ? Number(vals[0]) : null;
+            point.corriente = vals[1] != null ? Number(vals[1]) : null;
+            point.potencia = vals[2] != null ? Number(vals[2]) : null;
+          } else if (vals && typeof vals === 'object') {
+            point.voltaje = Number(vals.voltage ?? vals.voltaje ?? vals.v ?? null);
+            point.corriente = Number(vals.current ?? vals.corriente ?? vals.i ?? null);
+            point.potencia = Number(vals.power ?? vals.potencia ?? vals.p ?? null);
+          } else {
+            point.values = vals;
+          }
+        }
+      }
+
+      // Copiamos otras propiedades útiles (si existen)
+      if (payload?.svID) point.svID = payload.svID;
+
+      // Convertir campos climáticos comunes a Number para asegurar que los gráficos los lean
+      const climaKeys = ['temperatura', 'humedad', 'presion', 'v_viento', 'd_viento', 'indiceuv'];
+      climaKeys.forEach(k => {
+        if (point[k] != null) point[k] = Number(point[k]);
+      });
+
+      // Duplicar campos en inglés para compatibilidad con OPALRT_Detalle
+      // y añadir campos `time` y `date` que usan los detalles para los ejes
+      if (point.voltaje !== undefined) {
+        point.voltage = point.voltaje;
+      }
+      if (point.corriente !== undefined) {
+        point.current = point.corriente;
+      }
+      if (point.potencia !== undefined) {
+        point.power = point.potencia;
+      }
+
+      // time/date legibles para la vista de detalle
+      try {
+        const d = new Date(tsIso);
+        point.time = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        point.date = d.toLocaleDateString('es-ES');
+      } catch (e) {
+        // ignore
+      }
+
+      return point;
     };
 
     // Maneja actualizaciones de clima (principal)
     const onClima = (payload) => {
       if (!mounted.current) return;
+      console.log('clima_update received ts:', payload?.timestamp || payload?.ts || payload?.timestamp_ms);
       const point = makePoint(payload);
       setData(prev => {
         const next = [...prev, point].slice(-MAX_POINTS);
@@ -69,45 +129,40 @@ export default function DashboardClima() {
 
     // Eventos del socket (nombres puros; ajusta si tu servidor usa otros)
     socket.on('connect', () => {
-      console.debug('socket conectado', socket.id);
+      console.log('socket conectado', socket.id);
     });
 
-    // Compatibilidad con eventos emitidos por el backend (consumer usa 'clima_update')
-    socket.on('clima', onClima);
-    socket.on('clima:update', onClima);
     socket.on('clima_update', onClima);
     socket.on('connect_error', (err) => {
       console.error('Socket connect_error:', err);
     });
-    socket.on('opal', onOpal);
-    socket.on('opal:update', onOpal);
+    //socket.on('opal', onOpal);
+    socket.on('opal_update', onOpal);
     socket.on('dt', onDt);
-    socket.on('dt:update', onDt);
 
     // Evento inicial que puede traer snapshot de datos
     socket.on('initial', (payload = {}) => {
+      console.log('socket initial received keys:', Object.keys(payload || {}));
       if (!mounted.current) return;
       if (payload.clima && Array.isArray(payload.clima)) {
-        setAllData(payload.clima);
-        setData(payload.clima.slice(-MAX_POINTS));
+        console.log('initial.clima length:', payload.clima.length);
+        setAllData(payload.clima.map(makePoint));
+        setData(payload.clima.map(makePoint).slice(-MAX_POINTS));
       }
       if (payload.opal && Array.isArray(payload.opal)) {
-        setOpalData(payload.opal.slice(-MAX_POINTS));
+        setOpalData(payload.opal.map(makePoint).slice(-MAX_POINTS));
       }
       if (payload.dt && Array.isArray(payload.dt)) {
-        setDtData(payload.dt.slice(-MAX_POINTS));
+        setDtData(payload.dt.map(makePoint).slice(-MAX_POINTS));
       }
     });
 
     // Limpieza
     return () => {
       mounted.current = false;
-      socket.off('clima', onClima);
-      socket.off('clima:update', onClima);
-      socket.off('opal', onOpal);
-      socket.off('opal:update', onOpal);
-      socket.off('dt', onDt);
-      socket.off('dt:update', onDt);
+      socket.off('clima_update', onClima);
+      socket.off('opal_update', onOpal);
+      socket.off('dt_update', onDt);
       socket.off('initial');
       socket.disconnect();
     };

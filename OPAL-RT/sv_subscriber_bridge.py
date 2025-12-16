@@ -42,7 +42,13 @@ def post_payload(payload: dict):
 
 
 def handle_packet(data: bytes, addr):
-    """Try to parse data as JSON and forward it."""
+    """Try to parse data as JSON and forward a *normalized* payload.
+
+    The normalized payload will contain only a timestamp (`timestamp_ms`) and
+    `values` (either a list or a dict depending on svID). We branch based on
+    `svID` to handle different formats. For `OPAL_RT_SIM_01` we expect three
+    values in order: voltage, current, power.
+    """
     text = None
     try:
         text = data.decode('utf-8', errors='ignore').strip('\x00\n\r ')
@@ -53,16 +59,61 @@ def handle_packet(data: bytes, addr):
         # Try to parse
         payload = json.loads(text)
     except json.JSONDecodeError:
-        # Not valid JSON: wrap raw text
+        # Not valid JSON: wrap raw text (we keep legacy behavior)
         logger.warning('Received non-JSON packet from %s; wrapping into JSON', addr)
         payload = {'raw': text, 'from': addr[0], 'port': addr[1], 'received_at': int(time.time()*1000)}
     except Exception as e:
         logger.exception('Failed to handle packet from %s: %s', addr, e)
         return
 
-    logger.info('Forwarding payload from %s to %s', addr, BACKEND_URL)
+    # Normalize payload: keep only timestamp and values, branch by svID
+    sv_id = payload.get('svID') if isinstance(payload, dict) else None
+    # Prefer explicit timestamp field if present, fallback to received_at or now
+    timestamp_ms = None
+    if isinstance(payload, dict):
+        timestamp_ms = payload.get('timestamp_ms') or payload.get('received_at') or int(time.time()*1000)
+    else:
+        timestamp_ms = int(time.time()*1000)
+
+    normalized = None
+
+    # Case 1: OPAL_RT_SIM_01 -> expects [voltage, current, power]
+    if sv_id == 'OPAL_RT_SIM_01':
+        vals = payload.get('values') if isinstance(payload, dict) else None
+        if isinstance(vals, (list, tuple)) and len(vals) >= 3:
+            normalized = {
+                'timestamp_ms': timestamp_ms,
+                'values': {
+                    'voltage': vals[0],
+                    'current': vals[1],
+                    'power': vals[2],
+                }
+            }
+        else:
+            logger.warning('SV %s payload does not contain expected 3 values; forwarding raw values', sv_id)
+            normalized = {'timestamp_ms': timestamp_ms, 'values': vals}
+
+    # Case 2: placeholder for another svID
+    elif sv_id == 'OPAL_RT_OTHER_01':
+        # TODO: implement parsing for OPAL_RT_OTHER_01
+        # Example skeleton: map payload['values'] -> {'x': ..., 'y': ...}
+        vals = payload.get('values') if isinstance(payload, dict) else None
+        normalized = {'timestamp_ms': timestamp_ms, 'values': vals}  # placeholder
+
+    # Case 3: placeholder for a third svID
+    elif sv_id == 'OPAL_RT_OTHER_02':
+        # TODO: implement parsing for OPAL_RT_OTHER_02
+        vals = payload.get('values') if isinstance(payload, dict) else None
+        normalized = {'timestamp_ms': timestamp_ms, 'values': vals}  # placeholder
+
+    else:
+        # Unknown svID: default to timestamp + values if available
+        vals = payload.get('values') if isinstance(payload, dict) else None
+        normalized = {'timestamp_ms': timestamp_ms, 'values': vals}
+
+    logger.info('Forwarding normalized payload from %s to %s: %s', addr, BACKEND_URL, normalized)
     try:
-        post_payload(payload)
+        post_payload(normalized)
         logger.debug('Forwarded successfully')
     except Exception as e:
         logger.exception('Failed to post payload to backend: %s', e)

@@ -1,9 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ScatterChart, Scatter } from 'recharts';
 import { Filter, Calendar, TrendingUp, BarChart3, Activity, Download, Settings, RefreshCw, ArrowLeft, Eye, EyeOff } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useRecoilState } from 'recoil';
+import { opalDataState, opalLastUpdateState, opalAutoRefreshState } from '../state/opalState';
 
-export default function OpalDetalles({ opalData, title }) {
+export default function OpalDetalles({ datas, title }) {
+  const location = useLocation();
   // Estados para filtros y configuración
     const [selectedMetrics, setSelectedMetrics] = useState([]);
     const [dateRange, setDateRange] = useState({ start: '', end: '' });
@@ -12,10 +15,25 @@ export default function OpalDetalles({ opalData, title }) {
     const [showFilters, setShowFilters] = useState(true);
     const [autoRefresh, setAutoRefresh] = useState(false);
 
-    // Datos de ejemplo para demostración (en caso de que no haya datos)
+    // Recoil state for OPAL historical data
+    const [localOpalData, setLocalOpalData] = useRecoilState(opalDataState);
+    const [opalLastUpdate, setOpalLastUpdate] = useRecoilState(opalLastUpdateState);
+    const [opalAutoRefresh, setOpalAutoRefresh] = useRecoilState(opalAutoRefreshState);
+
+    // Polling ref and interval
+    const opalPollRef = useRef(null);
+    const POLL_INTERVAL_MS = 5000; // 5s default
+    const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+
+    // Datos (preferir prop `datas`, luego state de navegación, luego generar ejemplo)
+    const navOpalData = location?.state?.opalData;
+    const navTitle = location?.state?.title;
+
     const sampleData = useMemo(() => {
-    if (opalData && Array.isArray(opalData)) return opalData;
-    
+    if (datas && Array.isArray(datas)) return datas;
+    if (localOpalData && Array.isArray(localOpalData) && localOpalData.length) return localOpalData;
+    if (navOpalData && Array.isArray(navOpalData)) return navOpalData;
+
     // Generar datos de ejemplo con múltiples métricas
     const now = new Date();
     return Array.from({ length: 100 }, (_, i) => {
@@ -32,16 +50,25 @@ export default function OpalDetalles({ opalData, title }) {
         efficiency: 85 + Math.sin(i * 0.12) * 10 + Math.random() * 2
       };
     });
-  }, [opalData]);
+  }, [datas, navOpalData]);
 
   // Extraer métricas disponibles
   const availableMetrics = useMemo(() => {
     if (!sampleData.length) return [];
     const firstItem = sampleData[0];
-    return Object.keys(firstItem).filter(key => 
-      !['timestamp', 'time', 'date'].includes(key) && 
-      typeof firstItem[key] === 'number'
-    );
+    const mapKey = (k) => {
+      if (k === 'voltaje') return 'voltage';
+      if (k === 'corriente') return 'current';
+      if (k === 'potencia') return 'power';
+      return k;
+    };
+    const keys = Object.keys(firstItem).filter(k => !['timestamp', 'time', 'date'].includes(k) && typeof firstItem[k] === 'number');
+    const canonical = [];
+    for (const k of keys) {
+      const kk = mapKey(k);
+      if (!canonical.includes(kk)) canonical.push(kk);
+    }
+    return canonical;
   }, [sampleData]);
 
   const navigate = useNavigate();
@@ -103,6 +130,68 @@ export default function OpalDetalles({ opalData, title }) {
     }
   }, [availableMetrics, selectedMetrics.length]);
 
+  // Fetch historial OPAL desde backend y soportar polling (auto-refresh)
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchData = async () => {
+      try {
+        const queryParams = new URLSearchParams();
+        if (dateRange.start) {
+          try { queryParams.append('start', new Date(dateRange.start).toISOString()); } catch (e) { queryParams.append('start', dateRange.start); }
+        }
+        if (dateRange.end) {
+          try { queryParams.append('end', new Date(dateRange.end).toISOString()); } catch (e) { queryParams.append('end', dateRange.end); }
+        }
+        queryParams.append('agg', timeAggregation || 'raw');
+
+        const url = `${API_BASE.replace(/\/+$/, '')}/opal?${queryParams.toString()}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Error al cargar datos OPAL');
+        const result = await response.json();
+        if (!mounted) return;
+
+        const rows = (Array.isArray(result) ? result : []).map(r => {
+          const rawTs = r.timestamp || r.time || new Date().toISOString();
+          const tsObj = new Date(rawTs);
+          const voltaje = r.voltaje != null ? Number(r.voltaje) : (r.voltage != null ? Number(r.voltage) : null);
+          const corriente = r.corriente != null ? Number(r.corriente) : (r.current != null ? Number(r.current) : null);
+          const potencia = r.potencia != null ? Number(r.potencia) : (r.power != null ? Number(r.power) : null);
+          return {
+            timestamp: tsObj.toISOString(),
+            time: tsObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+            date: tsObj.toLocaleDateString('es-ES'),
+            voltaje,
+            corriente,
+            potencia,
+            voltage: voltaje,
+            current: corriente,
+            power: potencia
+          };
+        }).filter(r => r.timestamp);
+
+        setLocalOpalData(rows);
+        setOpalLastUpdate(new Date());
+      } catch (err) {
+        console.error('Error fetching OPAL history:', err);
+      }
+    };
+
+    fetchData();
+
+    if ((opalAutoRefresh || autoRefresh)) {
+      opalPollRef.current = setInterval(fetchData, POLL_INTERVAL_MS);
+    }
+
+    return () => {
+      mounted = false;
+      if (opalPollRef.current) {
+        clearInterval(opalPollRef.current);
+        opalPollRef.current = null;
+      }
+    };
+  }, [dateRange.start, dateRange.end, timeAggregation, opalAutoRefresh, autoRefresh, API_BASE, setLocalOpalData, setOpalLastUpdate]);
+
   // Filtrar datos según criterios
   const filteredData = useMemo(() => {
     let filtered = [...sampleData];
@@ -156,6 +245,52 @@ export default function OpalDetalles({ opalData, title }) {
       );
     }
     return null;
+  };
+
+  // Exportar datos filtrados a CSV (timestamp + métricas seleccionadas)
+  const exportCSV = () => {
+    const metrics = selectedMetrics && selectedMetrics.length ? selectedMetrics : (availableMetrics.length ? availableMetrics.slice(0,3) : ['voltage','current','power']);
+    const rows = (filteredData && filteredData.length) ? filteredData : sampleData;
+    if (!rows || !rows.length) {
+      window.alert('No hay datos para exportar');
+      return;
+    }
+
+    const escape = (v) => {
+      if (v == null) return '""';
+      const s = String(v);
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+
+    const headers = ['timestamp', ...metrics];
+    const lines = [];
+    lines.push(headers.map(h => escape(h)).join(';'));
+
+    const round3 = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v * 1000) / 1000 : v);
+
+    for (const r of rows) {
+      const ts = r.timestamp || r.time || '';
+      const values = metrics.map(k => {
+        // Prefer canonical keys (voltage/current/power) but support spanish keys
+        const v = r[k] !== undefined ? r[k] : (k === 'voltage' ? r.voltaje : (k === 'current' ? r.corriente : (k === 'power' ? r.potencia : r[k])));
+        const out = (typeof v === 'number' && isFinite(v)) ? round3(v) : v;
+        return escape(out == null ? '' : out);
+      });
+      lines.push([escape(ts), ...values].join(';'));
+    }
+
+    const csv = lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const namePrefix = 'opal';
+    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    a.download = `${namePrefix}_${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const renderChart = () => {
@@ -687,7 +822,7 @@ export default function OpalDetalles({ opalData, title }) {
             </button>
             <div>
               <h1 style={styles.title}>
-                {title || "Dashboard OPAL-RT"}
+                {title || navTitle || "Dashboard OPAL-RT"}
               </h1>
               <p style={styles.subtitle}>
                 Análisis histórico de datos en tiempo real
@@ -702,10 +837,10 @@ export default function OpalDetalles({ opalData, title }) {
             </div>
             
             <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
+              onClick={() => { setAutoRefresh(prev => !prev); setOpalAutoRefresh(prev => !prev); }}
               style={{
                 ...styles.actionButton,
-                background: autoRefresh 
+                background: (autoRefresh || opalAutoRefresh) 
                   ? 'linear-gradient(135deg, #22c55e, #16a34a)' 
                   : 'rgba(255, 255, 255, 0.1)',
                 color: 'white'
@@ -715,12 +850,13 @@ export default function OpalDetalles({ opalData, title }) {
               <RefreshCw style={{ 
                 width: '16px', 
                 height: '16px',
-                animation: autoRefresh ? 'spin 2s linear infinite' : 'none'
+                animation: (autoRefresh || opalAutoRefresh) ? 'spin 2s linear infinite' : 'none'
               }} />
               <span>Auto-actualizar</span>
             </button>
             
             <button
+              onClick={exportCSV}
               style={{
                 ...styles.actionButton,
                 background: 'linear-gradient(135deg, #6b73ff, #8b5cf6)',
@@ -729,7 +865,7 @@ export default function OpalDetalles({ opalData, title }) {
               className="action-button"
             >
               <Download style={{ width: '16px', height: '16px' }} />
-              <span>Exportar</span>
+              <span>Exportar CSV</span>
             </button>
           </div>
         </div>

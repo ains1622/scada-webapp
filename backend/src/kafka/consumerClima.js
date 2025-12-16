@@ -37,10 +37,14 @@ export const runConsumer = async (io) => {
         } catch (err) {
           console.error("Error insertando en DB:", err);
         }
-        // Emitir el evento principal y uno legacy para compatibilidad con clientes
+        // Emitir el evento principal
         io.emit("clima_update", data);
-        io.emit("clima", data);
-        //console.log('Mensaje enviado:', data);
+        try {
+          const cnt = io && io.engine && typeof io.engine.clientsCount === 'number' ? io.engine.clientsCount : 'unknown';
+          console.log('Mensaje enviado:', data, '-> clientes conectados:', cnt);
+        } catch (e) {
+          console.log('Mensaje enviado:', data);
+        }
       },
     });
   } catch (err) {

@@ -95,6 +95,104 @@ async function upsertAlertThreshold(parametro, minValue, maxValue) {
    );
    return getAlertThreshold(parametro);
 }
+
+// Obtener registros de la tabla `central` (OPAL). Soporta filtros opcionales y agregación (agg = raw|minute|hour|day)
+async function getCentral({ start, end, agg = 'raw', limit } = {}) {
+  try {
+    const values = [];
+    let where = '';
+    if (start) {
+      values.push(start);
+      where += ` AND timestamp >= $${values.length}`;
+    }
+    if (end) {
+      values.push(end);
+      where += ` AND timestamp <= $${values.length}`;
+    }
+
+    // Agregación tipo date_trunc si se solicita
+    if (agg && agg !== 'raw') {
+      const valid = agg === 'minute' || agg === 'hour' || agg === 'day';
+      const period = valid ? agg : 'hour';
+      const sql = `SELECT date_trunc('${period}', timestamp) AS timestamp,
+        AVG(voltaje) AS voltaje,
+        AVG(corriente) AS corriente,
+        AVG(potencia) AS potencia
+        FROM central
+        WHERE 1=1 ${where}
+        GROUP BY 1
+        ORDER BY 1 ASC`;
+      const res = await pool.query(sql, values);
+      return res.rows;
+    }
+
+    // Raw rows con límite (por defecto 1000)
+    const lim = limit && Number(limit) > 0 ? Number(limit) : 1000;
+    const sql = `SELECT id, voltaje, corriente, potencia, timestamp FROM central WHERE 1=1 ${where} ORDER BY timestamp ASC LIMIT ${lim}`;
+    const res = await pool.query(sql, values);
+    return res.rows;
+  } catch (err) {
+    console.error('Error fetching central data:', err);
+    throw err;
+  }
+}
+
+// Wrapper ligero por compatibilidad
+async function getCentralFiltered(opts = {}) {
+  return getCentral(opts);
+}
+
+// Insertar paquete SV en la tabla `central`.
+// Se extraen voltaje, corriente, potencia desde `payload.values` (puede ser array o objeto)
+// y se convierte `timestamp_ms` (ms) a TIMESTAMP.
+async function insertSvPacket(payload) {
+  try {
+    if (!payload) {
+      console.warn('insertSvPacket called with empty payload');
+      return;
+    }
+
+    // timestamp en ms (fallback a Date.now())
+    const tsMs = payload.timestamp_ms || payload.received_at || Date.now();
+
+    let voltaje = null;
+    let corriente = null;
+    let potencia = null;
+
+    // Prefer explicit top-level fields (voltaje/corriente/potencia) if present
+    if (payload.voltaje !== undefined || payload.corriente !== undefined || payload.potencia !== undefined) {
+      voltaje = payload.voltaje != null ? Number(payload.voltaje) : null;
+      corriente = payload.corriente != null ? Number(payload.corriente) : null;
+      potencia = payload.potencia != null ? Number(payload.potencia) : null;
+    } else {
+      const vals = payload.values;
+      if (Array.isArray(vals)) {
+        // order: [voltage, current, power]
+        voltaje = vals[0] != null ? Number(vals[0]) : null;
+        corriente = vals[1] != null ? Number(vals[1]) : null;
+        potencia = vals[2] != null ? Number(vals[2]) : null;
+      } else if (vals && typeof vals === 'object') {
+        // support different naming variations
+        voltaje = vals.voltage ?? vals.voltaje ?? vals.v ?? null;
+        corriente = vals.current ?? vals.corriente ?? vals.i ?? null;
+        potencia = vals.power ?? vals.potencia ?? vals.p ?? null;
+        voltaje = voltaje != null ? Number(voltaje) : null;
+        corriente = corriente != null ? Number(corriente) : null;
+        potencia = potencia != null ? Number(potencia) : null;
+      }
+    }
+
+    const ts = new Date(Number(tsMs));
+
+    await pool.query(
+      'INSERT INTO central(voltaje, corriente, potencia, timestamp) VALUES($1, $2, $3, $4)',
+      [voltaje, corriente, potencia, ts]
+    );
+  } catch (err) {
+    console.error('Error inserting into central:', err);
+    throw err;
+  }
+}
  
 export {
   pool,
@@ -102,7 +200,10 @@ export {
   getData,
   getDataFiltered,
   getAlertThreshold,
-  upsertAlertThreshold
+  upsertAlertThreshold,
+  getCentral,
+  getCentralFiltered,
+  insertSvPacket
 };
 
 
