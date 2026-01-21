@@ -1,16 +1,20 @@
 \c dashboard;
 
--- Crear tabla clima
-CREATE TABLE clima (
+-- Crear tabla clima (añadida columna station)
+CREATE TABLE IF NOT EXISTS clima (
     id SERIAL PRIMARY KEY,
     temperatura REAL,
     humedad REAL,
     presion REAL,
     v_viento NUMERIC(5,2),
     d_viento REAL,
-    indiceUV REAL,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    indiceuv REAL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    station TEXT
 );
+
+-- Índice para consultas por estación
+CREATE INDEX IF NOT EXISTS idx_clima_station ON clima (station);
 
 CREATE TABLE alertas (
   parametro TEXT PRIMARY KEY,
@@ -19,7 +23,7 @@ CREATE TABLE alertas (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
--- Función que emite notificación
+-- Función que emite notificación (incluye station)
 CREATE OR REPLACE FUNCTION notify_new_clima()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -32,8 +36,9 @@ BEGIN
         'presion', NEW.presion,
         'v_viento', NEW.v_viento,
         'd_viento', NEW.d_viento,
-        'indiceUV', NEW.indiceUV,
-        'timestamp', NEW.timestamp
+        'indiceuv', NEW.indiceuv,
+        'timestamp', NEW.timestamp,
+        'station', NEW.station
     );
 
     PERFORM pg_notify('clima_channel', payload::text);

@@ -10,6 +10,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
   const [chartType, setChartType] = useState('line');
   const [timeAggregation, setTimeAggregation] = useState('hour');
   const [showFilters, setShowFilters] = useState(true);
+  const [selectedStation, setSelectedStation] = useState('');
   const [autoRefresh, setAutoRefresh] = useRecoilState(autoRefreshState(parametro));
   const [showStats, setShowStats] = useState(['actual', 'minMax', 'promedio']);
   // local state mirrors Recoil atom for data — use Recoil for shared multi-views
@@ -186,9 +187,11 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         default:
           key = ts.toISOString();
       }
+      // Incluir la estación en la clave para separar buckets por estación
+      const bucketKey = `${key}|${r.station || 'unknown'}`;
       const val = Number(r[metricKey]);
-      if (!buckets.has(key)) buckets.set(key, { sum: 0, count: 0, ts });
-      const bucket = buckets.get(key);
+      if (!buckets.has(bucketKey)) buckets.set(bucketKey, { sum: 0, count: 0, ts, station: r.station });
+      const bucket = buckets.get(bucketKey);
       if (!isNaN(val)) {
         bucket.sum += val;
         bucket.count += 1;
@@ -204,7 +207,8 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         date: d.toLocaleDateString('es-ES'),
         fullDate: d.toLocaleString('es-ES'),
         [metricKey]: avg !== null ? Math.round(avg * 100) / 100 : null,
-        isAlert: false
+        isAlert: false,
+        station: v.station
       };
     });
     // ordenar por timestamp
@@ -305,7 +309,8 @@ export default function ParametroDetalles({ datas, title, parametro }) {
             time: tsObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
             date: tsObj.toLocaleDateString('es-ES'),
             fullDate: tsObj.toLocaleString('es-ES', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-            [metricKey]: isNaN(num) ? null : num
+            [metricKey]: isNaN(num) ? null : num,
+            station: r.station || 'Desconocida'
           };
         }).filter(r => r.timestamp && r[metricKey] !== null);
 
@@ -320,8 +325,12 @@ export default function ParametroDetalles({ datas, title, parametro }) {
           });
         }
 
+        console.log('Datos antes de agregación:', { total: filtered.length, estaciones: [...new Set(filtered.map(d => d.station))] });
+
         // Agregación
         const aggregated = aggregateData(filtered, timeAggregation, metricKey);
+
+        console.log('Datos después de agregación:', { total: aggregated.length, estaciones: [...new Set(aggregated.map(d => d.station))] });
 
         // Añadir campos auxiliares y flags de alerta (usar thresholds editados si existen)
         const enriched = aggregated.map((it) => ({
@@ -331,6 +340,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
 
         // Eliminar puntos con valor null por seguridad (recharts ignora nulls)
         const final = enriched.filter(it => typeof it[metricKey] === 'number' && !isNaN(it[metricKey]));
+        console.log('Datos cargados:', { total: final.length, estaciones: [...new Set(final.map(d => d.station))], timeAggregation });
         setData(final);
         setLastUpdate(new Date());
       } catch (err) {
@@ -372,8 +382,20 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       });
     }
 
+    // Filtrar por estación si está seleccionada
+    if (selectedStation) {
+      filtered = filtered.filter(item => item.station === selectedStation);
+    }
+
     return filtered;
-  }, [data, dateRange]);
+  }, [data, dateRange, selectedStation]);
+
+  // Obtener lista única de estaciones disponibles
+  const availableStations = useMemo(() => {
+    if (!data || !Array.isArray(data)) return [];
+    const stations = [...new Set(data.map(item => item.station).filter(Boolean))];
+    return stations.sort();
+  }, [data]);
   // Cálculos estadísticos
   const stats = useMemo(() => {
     if (!filteredData.length) return {};
@@ -1093,6 +1115,22 @@ export default function ParametroDetalles({ datas, title, parametro }) {
                     <option value="day">Por día</option>
                   </select>
                 </div>
+
+                {availableStations.length > 0 && (
+                  <div>
+                    <label style={styles.sectionLabel}>Estación</label>
+                    <select
+                      value={selectedStation}
+                      onChange={(e) => setSelectedStation(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="">Todas las estaciones</option>
+                      {availableStations.map(station => (
+                        <option key={station} value={station}>{station}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 {parametro !== 'direccion_viento' && (
                   <div>

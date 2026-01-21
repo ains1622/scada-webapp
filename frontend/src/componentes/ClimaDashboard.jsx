@@ -17,6 +17,8 @@ const SOCKET_URL = "http://localhost:4000";
 export default function DashboardClima() {
   const [data, setData] = useState([]);
   const [allData, setAllData] = useState([]);
+  const [stations, setStations] = useState([]);
+  const [selectedStation, setSelectedStation] = useState('all');
   const [opalData, setOpalData] = useState([]);
   const [dtData, setDtData] = useState([]);
   const [opalChartMode, setOpalChartMode] = useState('potencia-tiempo');
@@ -98,13 +100,18 @@ export default function DashboardClima() {
     // Maneja actualizaciones de clima (principal)
     const onClima = (payload) => {
       if (!mounted.current) return;
-      console.log('clima_update received ts:', payload?.timestamp || payload?.ts || payload?.timestamp_ms);
+      console.log('clima_update received ts:', payload?.timestamp || payload?.ts || payload?.timestamp_ms, 'station:', payload?.station);
       const point = makePoint(payload);
-      setData(prev => {
-        const next = [...prev, point].slice(-MAX_POINTS);
+      setAllData(prev => {
+        const next = [...prev, point].slice(-1000); // buffer razonable
+        // actualizar lista de estaciones si aparece una nueva
+        setStations(s => {
+          if (point.station && !s.includes(point.station)) return [...s, point.station];
+          return s;
+        });
         return next;
       });
-      setAllData(prev => [...prev, point]);
+      // data se actualiza por efecto que filtra según estación seleccionada
     };
 
     // Maneja actualizaciones de OPAL
@@ -146,8 +153,11 @@ export default function DashboardClima() {
       if (!mounted.current) return;
       if (payload.clima && Array.isArray(payload.clima)) {
         console.log('initial.clima length:', payload.clima.length);
-        setAllData(payload.clima.map(makePoint));
-        setData(payload.clima.map(makePoint).slice(-MAX_POINTS));
+        const points = payload.clima.map(makePoint);
+        setAllData(points);
+        const uniq = Array.from(new Set(points.map(p => p.station).filter(Boolean)));
+        setStations(uniq);
+        setData(selectedStation === 'all' ? points.slice(-MAX_POINTS) : points.filter(p => p.station === selectedStation).slice(-MAX_POINTS));
       }
       if (payload.opal && Array.isArray(payload.opal)) {
         setOpalData(payload.opal.map(makePoint).slice(-MAX_POINTS));
@@ -167,6 +177,12 @@ export default function DashboardClima() {
       socket.disconnect();
     };
   }, []);
+
+  // Filtrar `allData` por la estación seleccionada y mantener solo MAX_POINTS
+  useEffect(() => {
+    const filtered = selectedStation === 'all' ? allData : allData.filter(p => p.station === selectedStation);
+    setData(filtered.slice(-MAX_POINTS));
+  }, [allData, selectedStation]);
 
   const handleCardClick = (chartKey) => {
     navigate(`/${chartKey}`, { state: { data: allData, metric: chartKey } });
@@ -483,6 +499,15 @@ export default function DashboardClima() {
 
       {/* Contenido principal */}
       <div style={styles.mainContent}>
+        {/* Selector de estación */}
+        <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ color: '#cbd5e1', fontSize: '14px' }}>Estación:</label>
+          <select value={selectedStation} onChange={(e) => setSelectedStation(e.target.value)} style={{ padding: '6px 8px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', color: '#fff' }}>
+            <option value="all">Todas</option>
+            {stations.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+
         {/* Métricas climáticas puntuales */}
         <div style={styles.topMetrics}>
           {charts.map((chart) => (

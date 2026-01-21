@@ -4,7 +4,7 @@ import { testConexion, getData, getDataFiltered, getAlertThreshold, upsertAlertT
 import cors from "cors";
 import { Server } from "socket.io";
 import http from "http";
-import { sendApiDataToKafka } from "./src/kafka/producerClima.js";
+import { sendApiDataToKafka, getLatestClima } from "./src/kafka/producerClima.js";
 import { runConsumer } from "./src/kafka/consumerClima.js";
 import { initOpalProducer, sendOpalMessage } from './src/OPAL-RT/producerOpal.js';
 import { runOpalConsumer } from './src/OPAL-RT/consumerOpal.js';
@@ -106,7 +106,7 @@ app.get("/clima", async (req, res) => {
     }
 
     let data = await getDataFiltered({ start: startISO, end: endISO, agg });
-     // Si piden una métrica concreta, devolver objetos reducidos { timestamp, <metric> }
+     // Si piden una métrica concreta, devolver objetos reducidos { timestamp, <metric>, station }
      if (metric && Array.isArray(data)) {
        data = data.map(row => {
          // normalizar timestamp si viene con otro nombre
@@ -114,7 +114,8 @@ app.get("/clima", async (req, res) => {
          return {
            timestamp: ts,
            // si la columna no existe, devolver null para mantener esquema consistente
-           [metric]: row.hasOwnProperty(metric) ? row[metric] : null
+           [metric]: row.hasOwnProperty(metric) ? row[metric] : null,
+           station: row.station || null
          };
        });
      }
@@ -125,12 +126,29 @@ app.get("/clima", async (req, res) => {
   }
 });
 
+// Devuelve el último estado por estación (lo que el producer mantiene en memoria)
+app.get('/clima/latest', (req, res) => {
+  try {
+    const { station } = req.query;
+    const latest = getLatestClima();
+    if (station) {
+      return res.json({ [station]: latest[station] ?? null });
+    }
+    return res.json(latest);
+  } catch (err) {
+    console.error('GET /clima/latest error', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // Endpoint para historial OPAL (central)
 app.get('/opal', async (req, res) => {
   try {
     const { start, end, agg, limit } = req.query;
+    
     let startISO = null;
     let endISO = null;
+
     if (start) {
       const ds = new Date(start);
       if (!isNaN(ds)) startISO = ds.toISOString();
@@ -143,35 +161,46 @@ app.get('/opal', async (req, res) => {
       }
     }
 
-    const data = await getCentralFiltered({ start: startISO, end: endISO, agg });
+    // Si no hay fechas, usamos 'raw' para velocidad, si hay, respetamos la agregación pedida
+    const useAgg = (startISO || endISO) ? agg : 'raw';
+    
+    // Si no hay límite, ponemos uno de seguridad (ej. 100k) para evitar crasheos de memoria
+    const finalLimit = limit ? parseInt(limit) : 100000;
 
-    // Normalizar timestamp y campos numéricos
-    const normalized = (Array.isArray(data) ? data : []).map(r => ({
-      timestamp: r.timestamp || r.time || null,
-      time: r.timestamp ? new Date(r.timestamp).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '',
-      date: r.timestamp ? new Date(r.timestamp).toLocaleDateString('es-ES') : '',
-      voltaje: r.voltaje != null ? Number(r.voltaje) : null,
-      corriente: r.corriente != null ? Number(r.corriente) : null,
-      potencia: r.potencia != null ? Number(r.potencia) : null
-    }));
+    const data = await getCentralFiltered({ 
+      start: startISO, 
+      end: endISO, 
+      agg: useAgg,
+      limit: finalLimit 
+    });
 
+    if (!Array.isArray(data)) {
+      return res.json([]);
+    }
+
+    const len = data.length;
+    const normalized = new Array(len);
+
+    // Optimizamos el mapeo: Procesamiento directo sin funciones de fecha costosas
+    for (let i = 0; i < len; i++) {
+      const r = data[i];
+      const ts = r.timestamp || r.time;
+      
+      normalized[i] = {
+        // Enviamos el timestamp puro (el front lo formatea al mostrar)
+        timestamp: ts,
+        voltaje: r.voltaje !== null ? Number(r.voltaje) : null,
+        corriente: r.corriente !== null ? Number(r.corriente) : null,
+        potencia: r.potencia !== null ? Number(r.potencia) : null,
+      };
+    }
+
+    console.log(`GET /opal: rows=${len}, useAgg=${useAgg}`);
     res.json(normalized);
-  } catch (err) {
-    console.error('GET /opal error', err);
-    res.status(500).json({ error: 'Error fetching opal data' });
-  }
-});
 
-// Obtener umbrales para un parámetro
-app.get('/alertas/:param', async (req, res) => {
-  try {
-    const param = req.params.param;
-    const row = await getAlertThreshold(param);
-    if (!row) return res.json({ parametro: param, min: null, max: null });
-    res.json({ parametro: param, min: row.min_value, max: row.max_value, updated_at: row.updated_at });
   } catch (err) {
-    console.error('GET /alertas error', err);
-    res.status(500).json({ error: 'Error al leer umbrales' });
+    console.error('Error en GET /opal:', err);
+    res.status(500).json({ error: 'Error fetching opal data' });
   }
 });
 
