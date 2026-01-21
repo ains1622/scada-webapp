@@ -78,7 +78,7 @@ def handle_packet(data: bytes, addr):
     normalized = None
 
     # Case 1: OPAL_RT_SIM_01 -> expects [voltage, current, power]
-    if sv_id == 'OPAL_RT_SIM_01':
+    if sv_id == '4000':
         vals = payload.get('values') if isinstance(payload, dict) else None
         if isinstance(vals, (list, tuple)) and len(vals) >= 3:
             normalized = {
