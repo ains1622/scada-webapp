@@ -12,7 +12,31 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 });
- 
+
+pool.on('error', (err, client) => {
+  console.error('Error inesperado en un cliente inactivo del pool', err);
+});
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function withRetry(operation, retries = 3, delay = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      const isConnectionError = error.code === 'ECONNREFUSED' || error.code === '57P03' || error.message.includes('terminating connection');
+      
+      if (!isConnectionError || i === retries - 1) {
+        throw error; // Si no es error de conexión o se acabaron los intentos, lanza el error
+      }
+
+      console.warn(`Intento ${i + 1} fallido. Reintentando en ${delay}ms...`);
+      await wait(delay);
+      // Opcional: Aumentar delay (Backoff exponencial) -> delay = delay * 2;
+    }
+  }
+}
+
 const testConexion = async () => {
    try {
      const client = await pool.connect();
@@ -24,55 +48,60 @@ const testConexion = async () => {
 };
  
 const getData = async () => {
-   try {
-     const result = await pool.query('SELECT * FROM clima');
-     return result.rows;
-   } catch (error) {
-     console.error('Error fetching data:', error);
-     throw error;
-   }
+  return withRetry(async () => {
+    try {
+      const result = await pool.query('SELECT * FROM clima');
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      throw error;
+    }
+  }, 5, 2000);
 };
  
 const getDataFiltered = async ({ start, end, agg } = {}) => {
-   try {
-     const values = [];
-     let where = '';
-     if (start) {
-       values.push(start);
-       where += ` AND timestamp >= $${values.length}`;
-     }
-     if (end) {
-       values.push(end);
-       where += ` AND timestamp <= $${values.length}`;
-     }
- 
-     if (agg && agg !== 'raw') {
-       // usar date_trunc para agregación por minute/hour/day
-       const valid = agg === 'minute' || agg === 'hour' || agg === 'day';
-       const period = valid ? agg : 'hour';
-       const sql = `SELECT date_trunc('${period}', timestamp) AS timestamp,
-         AVG(temperatura) AS temperatura,
-         AVG(humedad) AS humedad,
-         AVG(presion) AS presion,
-         AVG(v_viento) AS v_viento,
-         AVG(d_viento) AS d_viento,
-         AVG(indiceuv) AS indiceuv
-         FROM clima
-         WHERE 1=1 ${where}
-         GROUP BY 1
-         ORDER BY 1 ASC`;
-       const res = await pool.query(sql, values);
-       return res.rows;
-     }
- 
-     // raw rows
-     const sql = `SELECT * FROM clima WHERE 1=1 ${where} ORDER BY timestamp ASC`;
-     const res = await pool.query(sql, values);
-     return res.rows;
-   } catch (error) {
-     console.error('Error fetching filtered data:', error);
-     throw error;
-   }
+  return withRetry(async () => { 
+    try {
+      const values = [];
+      let where = '';
+      if (start) {
+        values.push(start);
+        where += ` AND timestamp >= $${values.length}`;
+      }
+      if (end) {
+        values.push(end);
+        where += ` AND timestamp <= $${values.length}`;
+      }
+  
+      if (agg && agg !== 'raw') {
+        // usar date_trunc para agregación por minute/hour/day
+        const valid = agg === 'minute' || agg === 'hour' || agg === 'day';
+        const period = valid ? agg : 'hour';
+        const sql = `SELECT date_trunc('${period}', timestamp) AS timestamp,
+          station,
+          AVG(temperatura) AS temperatura,
+          AVG(humedad) AS humedad,
+          AVG(presion) AS presion,
+          AVG(v_viento) AS v_viento,
+          AVG(d_viento) AS d_viento,
+          AVG(indiceuv) AS indiceuv
+          FROM clima
+          WHERE 1=1 ${where}
+          GROUP BY 1, 2
+          ORDER BY 1, 2 ASC`;
+        const res = await pool.query(sql, values);
+        return res.rows;
+      }
+  
+      // raw rows
+      const sql = `SELECT * FROM clima WHERE 1=1 ${where} ORDER BY timestamp ASC`;
+      const res = await pool.query(sql, values);
+      return res.rows;
+    } catch (error) {
+      console.error('Error fetching filtered data:', error);
+      throw error;
+    }
+  }, 5, 2000); 
 };
  
 async function getAlertThreshold(parametro) {
@@ -120,8 +149,8 @@ async function getCentral({ start, end, agg = 'raw', limit } = {}) {
         AVG(potencia) AS potencia
         FROM central
         WHERE 1=1 ${where}
-        GROUP BY 1
-        ORDER BY 1 ASC`;
+        GROUP BY 1, 2
+        ORDER BY 1, 2 ASC`;
       const res = await pool.query(sql, values);
       return res.rows;
     }
@@ -146,52 +175,54 @@ async function getCentralFiltered(opts = {}) {
 // Se extraen voltaje, corriente, potencia desde `payload.values` (puede ser array o objeto)
 // y se convierte `timestamp_ms` (ms) a TIMESTAMP.
 async function insertSvPacket(payload) {
-  try {
-    if (!payload) {
-      console.warn('insertSvPacket called with empty payload');
-      return;
-    }
-
-    // timestamp en ms (fallback a Date.now())
-    const tsMs = payload.timestamp_ms || payload.received_at || Date.now();
-
-    let voltaje = null;
-    let corriente = null;
-    let potencia = null;
-
-    // Prefer explicit top-level fields (voltaje/corriente/potencia) if present
-    if (payload.voltaje !== undefined || payload.corriente !== undefined || payload.potencia !== undefined) {
-      voltaje = payload.voltaje != null ? Number(payload.voltaje) : null;
-      corriente = payload.corriente != null ? Number(payload.corriente) : null;
-      potencia = payload.potencia != null ? Number(payload.potencia) : null;
-    } else {
-      const vals = payload.values;
-      if (Array.isArray(vals)) {
-        // order: [voltage, current, power]
-        voltaje = vals[0] != null ? Number(vals[0]) : null;
-        corriente = vals[1] != null ? Number(vals[1]) : null;
-        potencia = vals[2] != null ? Number(vals[2]) : null;
-      } else if (vals && typeof vals === 'object') {
-        // support different naming variations
-        voltaje = vals.voltage ?? vals.voltaje ?? vals.v ?? null;
-        corriente = vals.current ?? vals.corriente ?? vals.i ?? null;
-        potencia = vals.power ?? vals.potencia ?? vals.p ?? null;
-        voltaje = voltaje != null ? Number(voltaje) : null;
-        corriente = corriente != null ? Number(corriente) : null;
-        potencia = potencia != null ? Number(potencia) : null;
+  return withRetry(async () => {
+    try {
+      if (!payload) {
+        console.warn('insertSvPacket called with empty payload');
+        return;
       }
+
+      // timestamp en ms (fallback a Date.now())
+      const tsMs = payload.timestamp_ms || payload.received_at || Date.now();
+
+      let voltaje = null;
+      let corriente = null;
+      let potencia = null;
+
+      // Prefer explicit top-level fields (voltaje/corriente/potencia) if present
+      if (payload.voltaje !== undefined || payload.corriente !== undefined || payload.potencia !== undefined) {
+        voltaje = payload.voltaje != null ? Number(payload.voltaje) : null;
+        corriente = payload.corriente != null ? Number(payload.corriente) : null;
+        potencia = payload.potencia != null ? Number(payload.potencia) : null;
+      } else {
+        const vals = payload.values;
+        if (Array.isArray(vals)) {
+          // order: [voltage, current, power]
+          voltaje = vals[0] != null ? Number(vals[0]) : null;
+          corriente = vals[1] != null ? Number(vals[1]) : null;
+          potencia = vals[2] != null ? Number(vals[2]) : null;
+        } else if (vals && typeof vals === 'object') {
+          // support different naming variations
+          voltaje = vals.voltage ?? vals.voltaje ?? vals.v ?? null;
+          corriente = vals.current ?? vals.corriente ?? vals.i ?? null;
+          potencia = vals.power ?? vals.potencia ?? vals.p ?? null;
+          voltaje = voltaje != null ? Number(voltaje) : null;
+          corriente = corriente != null ? Number(corriente) : null;
+          potencia = potencia != null ? Number(potencia) : null;
+        }
+      }
+
+      const ts = new Date(Number(tsMs));
+
+      await pool.query(
+        'INSERT INTO central(voltaje, corriente, potencia, timestamp) VALUES($1, $2, $3, $4)',
+        [voltaje, corriente, potencia, ts]
+      );
+    } catch (err) {
+      console.error('Error inserting into central:', err);
+      throw err;
     }
-
-    const ts = new Date(Number(tsMs));
-
-    await pool.query(
-      'INSERT INTO central(voltaje, corriente, potencia, timestamp) VALUES($1, $2, $3, $4)',
-      [voltaje, corriente, potencia, ts]
-    );
-  } catch (err) {
-    console.error('Error inserting into central:', err);
-    throw err;
-  }
+  }, 5, 2000);
 }
  
 export {
@@ -203,7 +234,8 @@ export {
   upsertAlertThreshold,
   getCentral,
   getCentralFiltered,
-  insertSvPacket
+  insertSvPacket,
+  withRetry
 };
 
 

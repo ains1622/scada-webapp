@@ -25,51 +25,101 @@ export default function OpalDetalles({ datas, title }) {
     const POLL_INTERVAL_MS = 5000; // 5s default
     const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
-    // Datos (preferir prop `datas`, luego state de navegación, luego generar ejemplo)
-    const navOpalData = location?.state?.opalData;
-    const navTitle = location?.state?.title;
-
-    const sampleData = useMemo(() => {
-    if (datas && Array.isArray(datas)) return datas;
+// Datos (preferir datos del backend cargados, luego prop `datas`)
+  const data = useMemo(() => {
     if (localOpalData && Array.isArray(localOpalData) && localOpalData.length) return localOpalData;
-    if (navOpalData && Array.isArray(navOpalData)) return navOpalData;
-
-    // Generar datos de ejemplo con múltiples métricas
-    const now = new Date();
-    return Array.from({ length: 100 }, (_, i) => {
-      const date = new Date(now.getTime() - (100 - i) * 60 * 60 * 1000);
-      return {
-        timestamp: date.toISOString(),
-        time: date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-        date: date.toLocaleDateString('es-ES'),
-        voltage: 220 + Math.sin(i * 0.1) * 10 + Math.random() * 5,
-        current: 15 + Math.cos(i * 0.15) * 3 + Math.random() * 2,
-        power: 3300 + Math.sin(i * 0.08) * 500 + Math.random() * 100,
-        frequency: 50 + Math.sin(i * 0.2) * 0.5 + Math.random() * 0.1,
-        temperature: 25 + Math.sin(i * 0.05) * 10 + Math.random() * 3,
-        efficiency: 85 + Math.sin(i * 0.12) * 10 + Math.random() * 2
-      };
-    });
-  }, [datas, navOpalData]);
+    if (datas && Array.isArray(datas)) return datas;
+    return [];
+  }, [datas, localOpalData]);
 
   // Extraer métricas disponibles
   const availableMetrics = useMemo(() => {
-    if (!sampleData.length) return [];
-    const firstItem = sampleData[0];
+    if (!data.length) return [];
+    const firstItem = data[0];
     const mapKey = (k) => {
       if (k === 'voltaje') return 'voltage';
       if (k === 'corriente') return 'current';
       if (k === 'potencia') return 'power';
       return k;
     };
-    const keys = Object.keys(firstItem).filter(k => !['timestamp', 'time', 'date'].includes(k) && typeof firstItem[k] === 'number');
+    const keys = Object.keys(firstItem).filter(k => !['timestamp', 'time', 'date', 'station'].includes(k) && typeof firstItem[k] === 'number');
     const canonical = [];
     for (const k of keys) {
       const kk = mapKey(k);
       if (!canonical.includes(kk)) canonical.push(kk);
     }
+    console.log('Available metrics:', { keys, canonical });
     return canonical;
-  }, [sampleData]);
+  }, [data]);
+
+  // Helper: agregación temporal (similar a ParametroDetalles)
+  const aggregateOpalData = (rows, agg) => {
+    if (!rows || !rows.length) return [];
+    if (agg === 'raw') return rows;
+
+    const buckets = new Map();
+    rows.forEach((r) => {
+      const ts = new Date(r.timestamp);
+      let key;
+      switch (agg) {
+        case 'minute':
+          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()} ${ts.getHours()}:${ts.getMinutes()}`;
+          break;
+        case 'hour':
+          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()} ${ts.getHours()}:00`;
+          break;
+        case 'day':
+          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()}`;
+          break;
+        case 'week':
+          const d = new Date(ts);
+          d.setDate(d.getDate() - d.getDay());
+          key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+          break;
+        default:
+          key = ts.toISOString();
+      }
+      const bucketKey = `${key}|${r.station || 'default'}`;
+      
+      if (!buckets.has(bucketKey)) {
+        buckets.set(bucketKey, { values: {}, count: 0, ts, station: r.station });
+      }
+      
+      const bucket = buckets.get(bucketKey);
+      const metrics = ['voltage', 'voltaje', 'current', 'corriente', 'power', 'potencia'];
+      
+      for (const metric of metrics) {
+        if (r[metric] != null && typeof r[metric] === 'number') {
+          if (!bucket.values[metric]) bucket.values[metric] = { sum: 0, count: 0 };
+          bucket.values[metric].sum += r[metric];
+          bucket.values[metric].count += 1;
+        }
+      }
+      bucket.count += 1;
+    });
+
+    const out = Array.from(buckets.entries()).map(([k, v]) => {
+      const d = new Date(v.ts);
+      const result = {
+        timestamp: d.toISOString(),
+        time: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+        date: d.toLocaleDateString('es-ES'),
+        station: v.station
+      };
+
+      // Calcular promedios
+      for (const metric of ['voltage', 'voltaje', 'current', 'corriente', 'power', 'potencia']) {
+        if (v.values[metric]) {
+          result[metric] = Math.round((v.values[metric].sum / v.values[metric].count) * 100) / 100;
+        }
+      }
+
+      return result;
+    });
+
+    out.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    return out;
+  };
 
   const navigate = useNavigate();
 
@@ -144,6 +194,11 @@ export default function OpalDetalles({ datas, title }) {
           try { queryParams.append('end', new Date(dateRange.end).toISOString()); } catch (e) { queryParams.append('end', dateRange.end); }
         }
         queryParams.append('agg', timeAggregation || 'raw');
+        
+        // Si no hay filtros de fecha, solicitar muchos más registros (todos)
+        // Si hay filtros, usar límite razonable
+        const limit = (dateRange.start && dateRange.end) ? 100000 : 500000;
+        queryParams.append('limit', limit);
 
         const url = `${API_BASE.replace(/\/+$/, '')}/opal?${queryParams.toString()}`;
         const response = await fetch(url);
@@ -154,22 +209,27 @@ export default function OpalDetalles({ datas, title }) {
         const rows = (Array.isArray(result) ? result : []).map(r => {
           const rawTs = r.timestamp || r.time || new Date().toISOString();
           const tsObj = new Date(rawTs);
-          const voltaje = r.voltaje != null ? Number(r.voltaje) : (r.voltage != null ? Number(r.voltage) : null);
-          const corriente = r.corriente != null ? Number(r.corriente) : (r.current != null ? Number(r.current) : null);
-          const potencia = r.potencia != null ? Number(r.potencia) : (r.power != null ? Number(r.power) : null);
+          
+          // Mapear campos con soporte a ambos nombres (español e inglés)
+          const voltage = r.voltaje != null ? Number(r.voltaje) : (r.voltage != null ? Number(r.voltage) : null);
+          const current = r.corriente != null ? Number(r.corriente) : (r.current != null ? Number(r.current) : null);
+          const power = r.potencia != null ? Number(r.potencia) : (r.power != null ? Number(r.power) : null);
+          
           return {
             timestamp: tsObj.toISOString(),
             time: tsObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
             date: tsObj.toLocaleDateString('es-ES'),
-            voltaje,
-            corriente,
-            potencia,
-            voltage: voltaje,
-            current: corriente,
-            power: potencia
+            voltaje: voltage,
+            voltage: voltage,
+            corriente: current,
+            current: current,
+            potencia: power,
+            power: power,
+            station: r.station || null
           };
         }).filter(r => r.timestamp);
 
+        console.log('Datos OPAL cargados:', { total: rows.length, first: rows[0] });
         setLocalOpalData(rows);
         setOpalLastUpdate(new Date());
       } catch (err) {
@@ -194,7 +254,7 @@ export default function OpalDetalles({ datas, title }) {
 
   // Filtrar datos según criterios
   const filteredData = useMemo(() => {
-    let filtered = [...sampleData];
+    let filtered = [...data];
     
     if (dateRange.start && dateRange.end) {
       const start = new Date(dateRange.start);
@@ -204,9 +264,34 @@ export default function OpalDetalles({ datas, title }) {
         return itemDate >= start && itemDate <= end;
       });
     }
+
+    // Si no hay filtros de fecha, usar raw (sin agregación) para mostrar más puntos
+    // Si hay filtros de fecha, usar timeAggregation normalmente
+    const agg = (dateRange.start && dateRange.end) ? timeAggregation : timeAggregation;
     
-    return filtered;
-  }, [sampleData, dateRange]);
+    // Aplicar agregación temporal
+    let aggregated = aggregateOpalData(filtered, agg);
+    
+    console.log(`Antes de limitar: ${aggregated.length} puntos, agg=${agg}`);
+    
+    // Limitar puntos según el tipo de agregación
+    // Raw: máximo 1000 para rendimiento
+    // Con agregación: máximo 5000 (minutos/horas pueden ser muchos)
+    const maxPoints = agg === 'raw' ? 1000 : 5000;
+    if (aggregated.length > maxPoints) {
+      const step = Math.ceil(aggregated.length / maxPoints);
+      aggregated = aggregated.filter((_, i) => i % step === 0);
+      console.log(`Después de limitar: ${aggregated.length} puntos (se saltaron cada ${step} puntos)`);
+    } else {
+      console.log(`No se limitó: ${aggregated.length} <= ${maxPoints}`);
+    }
+    
+    console.log('Filtered data:', { dataLength: data.length, filteredLength: filtered.length, aggregatedLength: aggregated.length, requestedAgg: timeAggregation, usedAgg: agg });
+    if (aggregated.length > 0) {
+      console.log('Aggregated sample:', JSON.stringify(aggregated[0], null, 2));
+    }
+    return aggregated;
+  }, [data, dateRange, timeAggregation]);
 
   const toggleMetric = (metric) => {
     setSelectedMetrics(prev => 
@@ -250,7 +335,7 @@ export default function OpalDetalles({ datas, title }) {
   // Exportar datos filtrados a CSV (timestamp + métricas seleccionadas)
   const exportCSV = () => {
     const metrics = selectedMetrics && selectedMetrics.length ? selectedMetrics : (availableMetrics.length ? availableMetrics.slice(0,3) : ['voltage','current','power']);
-    const rows = (filteredData && filteredData.length) ? filteredData : sampleData;
+    const rows = (filteredData && filteredData.length) ? filteredData : data;
     if (!rows || !rows.length) {
       window.alert('No hay datos para exportar');
       return;
@@ -271,8 +356,16 @@ export default function OpalDetalles({ datas, title }) {
     for (const r of rows) {
       const ts = r.timestamp || r.time || '';
       const values = metrics.map(k => {
-        // Prefer canonical keys (voltage/current/power) but support spanish keys
-        const v = r[k] !== undefined ? r[k] : (k === 'voltage' ? r.voltaje : (k === 'current' ? r.corriente : (k === 'power' ? r.potencia : r[k])));
+        // Mapeo flexible para soportar ambos nombres
+        let v = r[k];
+        if (v === undefined) {
+          if (k === 'voltage' && r.voltaje !== undefined) v = r.voltaje;
+          else if (k === 'current' && r.corriente !== undefined) v = r.corriente;
+          else if (k === 'power' && r.potencia !== undefined) v = r.potencia;
+          else if (k === 'voltaje' && r.voltage !== undefined) v = r.voltage;
+          else if (k === 'corriente' && r.current !== undefined) v = r.current;
+          else if (k === 'potencia' && r.power !== undefined) v = r.power;
+        }
         const out = (typeof v === 'number' && isFinite(v)) ? round3(v) : v;
         return escape(out == null ? '' : out);
       });
@@ -298,6 +391,20 @@ export default function OpalDetalles({ datas, title }) {
       data: filteredData,
       margin: { top: 20, right: 30, left: 20, bottom: 60 }
     };
+
+    console.warn('renderChart EJECUTÁNDOSE:', { filteredDataLength: filteredData.length, selectedMetrics, chartType, hasData: filteredData.length > 0 });
+    console.warn('selectedMetrics valores:', selectedMetrics);
+    console.warn('First data point keys:', Object.keys(filteredData[0] || {}));
+
+    if (!filteredData || filteredData.length === 0) {
+      console.warn('NO HAY DATOS PARA RENDERIZAR');
+      return <div>Sin datos</div>;
+    }
+
+    if (!selectedMetrics || selectedMetrics.length === 0) {
+      console.warn('NO HAY MÉTRICAS SELECCIONADAS');
+      return <div>Selecciona métricas</div>;
+    }
 
     switch (chartType) {
       case 'area':
@@ -715,15 +822,21 @@ export default function OpalDetalles({ datas, title }) {
     },
     chartArea: {
       flex: 1,
-      padding: '24px'
+      padding: '24px',
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column'
     },
     chartContainer: {
-      height: '100%',
+      flex: 1,
       background: 'rgba(255, 255, 255, 0.1)',
       backdropFilter: 'blur(10px)',
       borderRadius: '24px',
       padding: '24px',
-      border: '1px solid rgba(255, 255, 255, 0.2)'
+      border: '1px solid rgba(255, 255, 255, 0.2)',
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: '0'
     },
     chartHeader: {
       marginBottom: '20px'
@@ -822,7 +935,7 @@ export default function OpalDetalles({ datas, title }) {
             </button>
             <div>
               <h1 style={styles.title}>
-                {title || navTitle || "Dashboard OPAL-RT"}
+                {title || "Dashboard OPAL-RT"}
               </h1>
               <p style={styles.subtitle}>
                 Análisis histórico de datos en tiempo real
@@ -968,6 +1081,7 @@ export default function OpalDetalles({ datas, title }) {
                   onChange={(e) => setTimeAggregation(e.target.value)}
                   style={styles.select}
                 >
+                  <option value="raw">Sin procesar</option>
                   <option value="minute">Por minuto</option>
                   <option value="hour">Por hora</option>
                   <option value="day">Por día</option>
@@ -1061,7 +1175,7 @@ export default function OpalDetalles({ datas, title }) {
                     })}
                   </div>
                 </div>
-                <ResponsiveContainer width="100%" height="calc(100% - 80px)">
+                <ResponsiveContainer width="100%" height={400}>
                   {renderChart()}
                 </ResponsiveContainer>
               </div>

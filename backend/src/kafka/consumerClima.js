@@ -20,9 +20,10 @@ export const runConsumer = async (io) => {
       eachMessage: async ({ topic, partition, message }) => {
         const data = JSON.parse(message.value.toString());
         try {
+          // Insertar estación para poder filtrar por estación en la BD
           const query = `
-            INSERT INTO clima (temperatura, humedad, presion, v_viento, d_viento, indiceuv, timestamp)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO clima (temperatura, humedad, presion, v_viento, d_viento, indiceuv, timestamp, station)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           `;
           const values = [
             data.temperatura,
@@ -32,6 +33,7 @@ export const runConsumer = async (io) => {
             data.d_viento,
             data.indiceuv,
             data.timestamp,
+            data.station ?? null,
           ];
           await pool.query(query, values);
         } catch (err) {
@@ -41,7 +43,7 @@ export const runConsumer = async (io) => {
         io.emit("clima_update", data);
         try {
           const cnt = io && io.engine && typeof io.engine.clientsCount === 'number' ? io.engine.clientsCount : 'unknown';
-          console.log('Mensaje enviado:', data, '-> clientes conectados:', cnt);
+          //console.log('Mensaje enviado:', data, '-> clientes conectados:', cnt);
         } catch (e) {
           console.log('Mensaje enviado:', data);
         }
