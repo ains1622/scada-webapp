@@ -82,3 +82,37 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER central_notify_trigger
 AFTER INSERT ON central
 FOR EACH ROW EXECUTE FUNCTION notify_new_central();
+
+
+-- Tabla Digital Twin (DT) - estructura similar a central
+CREATE TABLE dt (
+    id SERIAL PRIMARY KEY,
+    voltaje REAL,
+    corriente REAL,
+    potencia REAL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Función notificación para DT
+CREATE OR REPLACE FUNCTION notify_new_dt()
+RETURNS TRIGGER AS $$
+DECLARE
+    payload JSON;
+BEGIN
+    payload := json_build_object(
+        'id', NEW.id,
+        'voltaje', NEW.voltaje,
+        'corriente', NEW.corriente,
+        'potencia', NEW.potencia,
+        'timestamp', NEW.timestamp
+    );
+
+    PERFORM pg_notify('dt_channel', payload::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger para DT
+CREATE TRIGGER dt_notify_trigger
+AFTER INSERT ON dt
+FOR EACH ROW EXECUTE FUNCTION notify_new_dt();

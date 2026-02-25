@@ -144,7 +144,7 @@ function getDataUrls() {
   }
 
   return {};
-} 
+}
 
 async function loginToApi() {
   try {
@@ -234,7 +234,7 @@ function processApiJson(json, stationFromUrl) {
         // Guardamos los últimos valores no nulos para esta estación
         Object.entries(campoMap).forEach(([apiKey, mappedKey]) => {
           if (item[apiKey] !== null && item[apiKey] !== undefined) {
-            registrosPorEstacion[station][mappedKey] = item[apiKey] * 10;
+            registrosPorEstacion[station][mappedKey] = item[apiKey];
           }
         });
       }

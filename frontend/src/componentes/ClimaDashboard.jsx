@@ -21,6 +21,8 @@ export default function DashboardClima() {
   const [selectedStation, setSelectedStation] = useState('all');
   const [opalData, setOpalData] = useState([]);
   const [dtData, setDtData] = useState([]);
+  const [alertConfig, setAlertConfig] = useState([]); // Alertas dinamicas desde la base de datos
+  const [activeAlerts, setActiveAlerts] = useState([]); // Alertas activas calculadas basadas en los datos
   const [opalChartMode, setOpalChartMode] = useState('potencia-tiempo');
   const MAX_POINTS = 10;
   const navigate = useNavigate();
@@ -145,7 +147,7 @@ export default function DashboardClima() {
     });
     //socket.on('opal', onOpal);
     socket.on('opal_update', onOpal);
-    socket.on('dt', onDt);
+    socket.on('dt_update', onDt);
 
     // Evento inicial que puede traer snapshot de datos
     socket.on('initial', (payload = {}) => {
@@ -178,6 +180,73 @@ export default function DashboardClima() {
     };
   }, []);
 
+  // Fetch alert configuration on mount
+  useEffect(() => {
+    fetch('http://localhost:4000/alertas')
+      .then(res => res.json())
+      .then(configs => {
+        if (Array.isArray(configs)) {
+          console.log('Alert configs loaded:', configs);
+          setAlertConfig(configs);
+        }
+      })
+      .catch(err => console.error('Error fetching alerts:', err));
+  }, []);
+
+  // Calcular alertas activas cada vez que cambien los datos o la configuración de alertas.
+  useEffect(() => {
+    if (!alertConfig.length || !data.length) {
+      if (activeAlerts.length > 0) setActiveAlerts([]);
+      return;
+    }
+
+    // Comprueba los últimos datos recibidos para alertas en tiempo real.
+    // data es la matriz de puntos recientes. Veamos el último.
+    const latestPoint = data[data.length - 1];
+    if (!latestPoint) return;
+
+    const newAlerts = [];
+
+    alertConfig.forEach(config => {
+      const { parametro, max_value, min_value } = config;
+
+      // Cuenta cuántos puntos en el búfer de datos actual superan el umbral
+      if (max_value !== null && max_value !== undefined) {
+        const count = data.filter(d => {
+          const val = d[parametro];
+          return val !== undefined && val !== null && Number(val) > max_value;
+        }).length;
+
+        if (count > 0) {
+          newAlerts.push({
+            parametro,
+            type: 'max',
+            msg: `⚠️ ${parametro} > ${max_value} (${count})`
+          });
+        }
+      }
+
+      if (min_value !== null && min_value !== undefined) {
+        const count = data.filter(d => {
+          const val = d[parametro];
+          return val !== undefined && val !== null && Number(val) < min_value;
+        }).length;
+
+        if (count > 0) {
+          newAlerts.push({
+            parametro,
+            type: 'min',
+            msg: `⚠️ ${parametro} < ${min_value} (${count})`
+          });
+        }
+      }
+    });
+
+    if (JSON.stringify(newAlerts) !== JSON.stringify(activeAlerts)) {
+      setActiveAlerts(newAlerts);
+    }
+  }, [data, alertConfig]);
+
   // Filtrar `allData` por la estación seleccionada y mantener solo MAX_POINTS
   useEffect(() => {
     const filtered = selectedStation === 'all' ? allData : allData.filter(p => p.station === selectedStation);
@@ -198,7 +267,7 @@ export default function DashboardClima() {
   };
 
   const getOpalChartConfig = () => {
-    switch(opalChartMode) {
+    switch (opalChartMode) {
       case 'potencia-tiempo': return { xKey: 'timestamp', yKey: 'potencia', xLabel: 'Tiempo', yLabel: 'Potencia (W)', color: '#6b73ff', title: 'Potencia vs Tiempo' };
       case 'corriente-voltaje': return { xKey: 'voltaje', yKey: 'corriente', xLabel: 'Voltaje (V)', yLabel: 'Corriente (A)', color: '#22c55e', title: 'Corriente vs Voltaje' };
       case 'potencia-voltaje': return { xKey: 'voltaje', yKey: 'potencia', xLabel: 'Voltaje (V)', yLabel: 'Potencia (W)', color: '#f59e0b', title: 'Potencia vs Voltaje' };
@@ -356,7 +425,7 @@ export default function DashboardClima() {
       display: 'flex',
       gap: '24px',
       justifyContent: 'center',
-      alignItems: 'center',
+      alignItems: 'stretch',
       maxWidth: '1400px',
       width: '100%'
     },
@@ -492,8 +561,17 @@ export default function DashboardClima() {
         <button style={styles.homeButton} onClick={handleHomeClick}>🏠 Home</button>
         <div style={styles.logo}>🔧 SCADA Dashboard</div>
         <div style={styles.alertsContainer}>
-          <div style={styles.alertCard}>⚠️ Temperatura sobre 35°C</div>
-          <div style={styles.alertCard}>⚠️ Humedad crítica</div>
+          {activeAlerts.length > 0 ? (
+            activeAlerts.map((alert, idx) => (
+              <div key={idx} style={styles.alertCard}>
+                {alert.msg}
+              </div>
+            ))
+          ) : (
+            <div style={{ ...styles.alertCard, background: 'rgba(255,255,255,0.05)', color: '#aaa' }}>
+              Variables normales
+            </div>
+          )}
         </div>
       </div>
 

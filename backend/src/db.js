@@ -25,7 +25,7 @@ async function withRetry(operation, retries = 3, delay = 1000) {
       return await operation();
     } catch (error) {
       const isConnectionError = error.code === 'ECONNREFUSED' || error.code === '57P03' || error.message.includes('terminating connection');
-      
+
       if (!isConnectionError || i === retries - 1) {
         throw error; // Si no es error de conexión o se acabaron los intentos, lanza el error
       }
@@ -38,15 +38,15 @@ async function withRetry(operation, retries = 3, delay = 1000) {
 }
 
 const testConexion = async () => {
-   try {
-     const client = await pool.connect();
-     console.log('Conexión a la base de datos exitosa');
-     client.release();
-   } catch (error) {
-     console.error('Error en la conexión a la base de datos:', error);
-   }
+  try {
+    const client = await pool.connect();
+    console.log('Conexión a la base de datos exitosa');
+    client.release();
+  } catch (error) {
+    console.error('Error en la conexión a la base de datos:', error);
+  }
 };
- 
+
 const getData = async () => {
   return withRetry(async () => {
     try {
@@ -58,9 +58,9 @@ const getData = async () => {
     }
   }, 5, 2000);
 };
- 
+
 const getDataFiltered = async ({ start, end, agg } = {}) => {
-  return withRetry(async () => { 
+  return withRetry(async () => {
     try {
       const values = [];
       let where = '';
@@ -72,7 +72,7 @@ const getDataFiltered = async ({ start, end, agg } = {}) => {
         values.push(end);
         where += ` AND timestamp <= $${values.length}`;
       }
-  
+
       if (agg && agg !== 'raw') {
         // usar date_trunc para agregación por minute/hour/day
         const valid = agg === 'minute' || agg === 'hour' || agg === 'day';
@@ -92,7 +92,7 @@ const getDataFiltered = async ({ start, end, agg } = {}) => {
         const res = await pool.query(sql, values);
         return res.rows;
       }
-  
+
       // raw rows
       const sql = `SELECT * FROM clima WHERE 1=1 ${where} ORDER BY timestamp ASC`;
       const res = await pool.query(sql, values);
@@ -101,29 +101,78 @@ const getDataFiltered = async ({ start, end, agg } = {}) => {
       console.error('Error fetching filtered data:', error);
       throw error;
     }
-  }, 5, 2000); 
+  }, 5, 2000);
 };
- 
+
 async function getAlertThreshold(parametro) {
-   const res = await pool.query(
-     'SELECT min_value, max_value, updated_at FROM alertas WHERE parametro = $1',
-     [parametro]
-   );
-   return res.rows[0] || null;
+  const res = await pool.query(
+    'SELECT min_value, max_value, updated_at FROM alertas WHERE parametro = $1',
+    [parametro]
+  );
+  return res.rows[0] || null;
 }
- 
+
 async function upsertAlertThreshold(parametro, minValue, maxValue) {
-   await pool.query(
-     `INSERT INTO alertas(parametro, min_value, max_value, updated_at)
+  await pool.query(
+    `INSERT INTO alertas(parametro, min_value, max_value, updated_at)
       VALUES ($1, $2, $3, now())
       ON CONFLICT (parametro) DO UPDATE
         SET min_value = EXCLUDED.min_value,
             max_value = EXCLUDED.max_value,
             updated_at = now()`,
-     [parametro, minValue, maxValue]
-   );
-   return getAlertThreshold(parametro);
+    [parametro, minValue, maxValue]
+  );
+  return getAlertThreshold(parametro);
 }
+
+async function getAllAlerts() {
+  // Select all alerts (parametro is PK)
+  const res = await pool.query(
+    'SELECT * FROM alertas ORDER BY parametro'
+  );
+  return res.rows;
+}
+
+// Obtener registros de la tabla `dt` (Digital Twin). Estructura similar a central/OPAL.
+async function getDt({ start, end, agg = 'raw', limit } = {}) {
+  try {
+    const values = [];
+    let where = '';
+    if (start) {
+      values.push(start);
+      where += ` AND timestamp >= $${values.length}`;
+    }
+    if (end) {
+      values.push(end);
+      where += ` AND timestamp <= $${values.length}`;
+    }
+
+    if (agg && agg !== 'raw') {
+      const valid = agg === 'minute' || agg === 'hour' || agg === 'day';
+      const period = valid ? agg : 'hour';
+      const sql = `SELECT date_trunc('${period}', timestamp) AS timestamp,
+        AVG(voltaje) AS voltaje,
+        AVG(corriente) AS corriente,
+        AVG(potencia) AS potencia
+        FROM dt
+        WHERE 1=1 ${where}
+        GROUP BY 1, 2
+        ORDER BY 1, 2 ASC`;
+      const res = await pool.query(sql, values);
+      return res.rows;
+    }
+
+    const lim = limit && Number(limit) > 0 ? Number(limit) : 1000;
+    const sql = `SELECT id, voltaje, corriente, potencia, timestamp FROM dt WHERE 1=1 ${where} ORDER BY timestamp ASC LIMIT ${lim}`;
+    const res = await pool.query(sql, values);
+    return res.rows;
+  } catch (err) {
+    console.error('Error fetching dt data:', err);
+    throw err;
+  }
+}
+
+// Obtener registros de la tabla `central` (OPAL). Soporta filtros opcionales y agregación (agg = raw|minute|hour|day)
 
 // Obtener registros de la tabla `central` (OPAL). Soporta filtros opcionales y agregación (agg = raw|minute|hour|day)
 async function getCentral({ start, end, agg = 'raw', limit } = {}) {
@@ -169,6 +218,50 @@ async function getCentral({ start, end, agg = 'raw', limit } = {}) {
 // Wrapper ligero por compatibilidad
 async function getCentralFiltered(opts = {}) {
   return getCentral(opts);
+}
+
+// Insertar paquete DT en la tabla `dt`.
+async function insertDtPacket(payload) {
+  return withRetry(async () => {
+    try {
+      if (!payload) return;
+
+      const tsMs = payload.timestamp_ms || payload.received_at || Date.now();
+      let voltaje = null;
+      let corriente = null;
+      let potencia = null;
+
+      if (payload.voltaje !== undefined || payload.corriente !== undefined || payload.potencia !== undefined) {
+        voltaje = payload.voltaje != null ? Number(payload.voltaje) : null;
+        corriente = payload.corriente != null ? Number(payload.corriente) : null;
+        potencia = payload.potencia != null ? Number(payload.potencia) : null;
+      } else {
+        const vals = payload.values;
+        if (Array.isArray(vals)) {
+          voltaje = vals[0] != null ? Number(vals[0]) : null;
+          corriente = vals[1] != null ? Number(vals[1]) : null;
+          potencia = vals[2] != null ? Number(vals[2]) : null;
+        } else if (vals && typeof vals === 'object') {
+          voltaje = vals.voltage ?? vals.voltaje ?? vals.v ?? null;
+          corriente = vals.current ?? vals.corriente ?? vals.i ?? null;
+          potencia = vals.power ?? vals.potencia ?? vals.p ?? null;
+          voltaje = voltaje != null ? Number(voltaje) : null;
+          corriente = corriente != null ? Number(corriente) : null;
+          potencia = potencia != null ? Number(potencia) : null;
+        }
+      }
+
+      const ts = new Date(Number(tsMs));
+
+      await pool.query(
+        'INSERT INTO dt(voltaje, corriente, potencia, timestamp) VALUES($1, $2, $3, $4)',
+        [voltaje, corriente, potencia, ts]
+      );
+    } catch (err) {
+      console.error('Error inserting into dt:', err);
+      throw err;
+    }
+  }, 5, 2000);
 }
 
 // Insertar paquete SV en la tabla `central`.
@@ -224,7 +317,7 @@ async function insertSvPacket(payload) {
     }
   }, 5, 2000);
 }
- 
+
 export {
   pool,
   testConexion,
@@ -232,10 +325,11 @@ export {
   getDataFiltered,
   getAlertThreshold,
   upsertAlertThreshold,
+  getAllAlerts,
   getCentral,
+  getDt,
   getCentralFiltered,
   insertSvPacket,
+  insertDtPacket,
   withRetry
 };
-
-

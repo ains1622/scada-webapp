@@ -98,16 +98,25 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     return configs[parametro] || configs.temperatura;
   }, [parametro]);
 
+  // Colores para estaciones
+  const stationColors = [
+    '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#84cc16', '#d946ef', '#f97316'
+  ];
+  const getStationColor = (station, index) => {
+    return stationColors[index % stationColors.length];
+  };
+
   // Icono principal para este parámetro (componente de lucide-react)
   const IconoParametro = parametroConfig.icono || Thermometer;
 
-            
+
   // sampleData removed: not used currently, keep codebase smaller and avoid lint warnings
   // Ref para el interval ID
   const pollRef = useRef(null);
   // Poll interval (ms) - cambiar aquí para ajustar la frecuencia de fetch
   const POLL_INTERVAL_MS = 5000; // 5 segundos
-  
+
   const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000';
   // Cargar umbrales desde backend cuando cambia el parámetro
   useEffect(() => {
@@ -176,13 +185,13 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       let key;
       switch (agg) {
         case 'minute':
-          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()} ${ts.getHours()}:${ts.getMinutes()}`;
+          key = `${ts.getUTCFullYear()}-${ts.getUTCMonth()}-${ts.getUTCDate()} ${ts.getUTCHours()}:${ts.getUTCMinutes()}`;
           break;
         case 'hour':
-          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()} ${ts.getHours()}:00`;
+          key = `${ts.getUTCFullYear()}-${ts.getUTCMonth()}-${ts.getUTCDate()} ${ts.getUTCHours()}:00`;
           break;
         case 'day':
-          key = `${ts.getFullYear()}-${ts.getMonth()}-${ts.getDate()}`;
+          key = `${ts.getUTCFullYear()}-${ts.getUTCMonth()}-${ts.getUTCDate()}`;
           break;
         default:
           key = ts.toISOString();
@@ -203,9 +212,9 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       const d = new Date(v.ts);
       return {
         timestamp: d.toISOString(),
-        time: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-        date: d.toLocaleDateString('es-ES'),
-        fullDate: d.toLocaleString('es-ES'),
+        time: d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }),
+        date: d.toLocaleDateString('es-ES', { timeZone: 'UTC' }),
+        fullDate: d.toLocaleString('es-ES', { timeZone: 'UTC' }),
         [metricKey]: avg !== null ? Math.round(avg * 100) / 100 : null,
         isAlert: false,
         station: v.station
@@ -249,7 +258,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     const a = document.createElement('a');
     a.href = url;
     const namePrefix = parametro || metricKey || 'export';
-    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     a.download = `${namePrefix}_${stamp}.csv`;
     document.body.appendChild(a);
     a.click();
@@ -291,7 +300,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         const response = await fetch(url);
         if (!response.ok) throw new Error('Error al cargar los datos');
         const result = await response.json();
-        
+
         if (!mounted) return;
         const metricKey = parametroConfig.metricaPrincipal;
 
@@ -306,9 +315,9 @@ export default function ParametroDetalles({ datas, title, parametro }) {
             ...r,
             // normalizar timestamp y campos legibles que usa el chart
             timestamp: tsObj.toISOString(),
-            time: tsObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-            date: tsObj.toLocaleDateString('es-ES'),
-            fullDate: tsObj.toLocaleString('es-ES', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            time: tsObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }),
+            date: tsObj.toLocaleDateString('es-ES', { timeZone: 'UTC' }),
+            fullDate: tsObj.toLocaleString('es-ES', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }),
             [metricKey]: isNaN(num) ? null : num,
             station: r.station || 'Desconocida'
           };
@@ -396,24 +405,62 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     const stations = [...new Set(data.map(item => item.station).filter(Boolean))];
     return stations.sort();
   }, [data]);
+
+  // Pivotear datos para gráfico multicurva cuando se seleccionan "Todas"
+  const pivotedChartData = useMemo(() => {
+    // Si hay una estación seleccionada, usamos los datos filtrados normales
+    if (selectedStation) return filteredData;
+
+    // Si son todas, pivoteamos por timestamp
+    const pivotMap = new Map();
+
+    // Primero, obtener todos los timestamps únicos y ordenados de filteredData
+    // filteredData ya tiene la agregación/filtro de fechas aplicado si viene de aggregateData(?)
+    // OJO: filteredData se calcula basada en `selectStation`. Si selectedStation es '', filteredData tiene todo mixed.
+
+    filteredData.forEach(item => {
+      const timeKey = item.timestamp; // La key canónica
+      if (!pivotMap.has(timeKey)) {
+        pivotMap.set(timeKey, {
+          timestamp: item.timestamp,
+          time: item.time,
+          date: item.date,
+          fullDate: item.fullDate,
+          // inicializar métrica principal como null o algo genérico? 
+          // Recharts ignora keys que no están. 
+        });
+      }
+      const entry = pivotMap.get(timeKey);
+      // Asignar el valor de la métrica principal a la key de la estación
+      // Ejemplo: { ..., "Estacion A": 25.4, "Estacion B": 26.1 }
+      if (item.station) {
+        entry[item.station] = item[parametroConfig.metricaPrincipal];
+      }
+      // Mantener una propiedad genérica para tooltip global si se desea
+      // entry[parametroConfig.metricaPrincipal] = ... (esto sobrescribiría si hay conflicto)
+    });
+
+    return Array.from(pivotMap.values()).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  }, [filteredData, selectedStation, parametroConfig.metricaPrincipal]);
+
   // Cálculos estadísticos
   const stats = useMemo(() => {
     if (!filteredData.length) return {};
-    
+
     const valores = filteredData.map(d => d[parametroConfig.metricaPrincipal]);
     const current = valores[valores.length - 1];
     const min = Math.min(...valores);
     const max = Math.max(...valores);
     const avg = valores.reduce((a, b) => a + b, 0) / valores.length;
     const alerts = filteredData.filter(d => d.isAlert).length;
-    
+
     // Tendencia (últimos 10 vs anteriores 10)
     const recent = valores.slice(-10);
     const previous = valores.slice(-20, -10);
     const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
     const previousAvg = previous.reduce((a, b) => a + b, 0) / previous.length;
     const trend = recentAvg - previousAvg;
-    
+
     return {
       current,
       min,
@@ -443,8 +490,8 @@ export default function ParametroDetalles({ datas, title, parametro }) {
           </p>
           {payload.map((entry, index) => (
             <div key={index} style={{ marginBottom: '4px' }}>
-              <p style={{ 
-                fontWeight: '600', 
+              <p style={{
+                fontWeight: '600',
                 color: entry.color,
                 margin: 0,
                 fontSize: '16px'
@@ -454,10 +501,10 @@ export default function ParametroDetalles({ datas, title, parametro }) {
             </div>
           ))}
           {data.isAlert && (
-            <div style={{ 
-              marginTop: '8px', 
-              padding: '4px 8px', 
-              backgroundColor: '#fef2f2', 
+            <div style={{
+              marginTop: '8px',
+              padding: '4px 8px',
+              backgroundColor: '#fef2f2',
               borderRadius: '6px',
               border: '1px solid #fecaca'
             }}>
@@ -500,20 +547,20 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     });
     // maxValue not required currently
     return (
-      <RadialBarChart 
-        width={500} 
-        height={300} 
-        cx={150} 
-        cy={150} 
-        innerRadius={30} 
-        outerRadius={140} 
-        barSize={20} 
+      <RadialBarChart
+        width={500}
+        height={300}
+        cx={150}
+        cy={150}
+        innerRadius={30}
+        outerRadius={140}
+        barSize={20}
         data={directionSectors}
       >
-        <PolarAngleAxis 
-          type="number" 
-          domain={[0, 360]} 
-          angleAxisId={0} 
+        <PolarAngleAxis
+          type="number"
+          domain={[0, 360]}
+          angleAxisId={0}
           tick={false}
         />
         <RadialBar
@@ -548,114 +595,116 @@ export default function ParametroDetalles({ datas, title, parametro }) {
     if (parametro === 'direccion_viento') {
       return renderWindDirectionChart();
     }
+    // Si hay estación seleccionada, mostramos gráfico simple (1 serie).
+    // Si NO hay estación (selectedStation == ''), mostramos multi-serie.
+    const isMultiStation = !selectedStation && availableStations.length > 0;
+    const chartData = isMultiStation ? pivotedChartData : filteredData;
+
     const commonProps = {
-      data: filteredData,
+      data: chartData,
       margin: { top: 20, right: 30, left: 20, bottom: 60 }
     };
-    // Solo la métrica principal
-    const metricas = [
-      { 
-        key: parametroConfig.metricaPrincipal, 
-        name: parametroConfig.nombreCompleto, 
-        color: parametroConfig.color 
-      }
-    ];
+
+    // Series a renderizar
+    let series = [];
+    if (isMultiStation) {
+      series = availableStations.map((st, idx) => ({
+        key: st,
+        name: st,
+        color: getStationColor(st, idx)
+      }));
+    } else {
+      series = [{
+        key: parametroConfig.metricaPrincipal,
+        name: parametroConfig.nombreCompleto,
+        color: parametroConfig.color
+      }];
+    }
+
+    // Solo la métrica principal (legacy support if needed inside switch)
+    const metricas = series;
+
+    // Ejes comunes
+    const CommonAxes = () => (
+      <>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+        <XAxis
+          dataKey="time"
+          tick={{ fontSize: 12, fill: '#cbd5e1' }}
+          axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+          tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+          angle={-45}
+          textAnchor="end"
+          height={80}
+        />
+        <YAxis
+          tick={{ fontSize: 12, fill: '#cbd5e1' }}
+          axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+          tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
+          label={{ value: `${parametroConfig.nombreCompleto} (${parametroConfig.unidad})`, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#cbd5e1' } }}
+        />
+        <Tooltip content={customTooltip} />
+        <Legend />
+      </>
+    );
+
     switch (chartType) {
       case 'area':
         return (
           <AreaChart {...commonProps}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-            <XAxis 
-              dataKey="time" 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              angle={-45}
-              textAnchor="end"
-              height={80}
-            />
-            <YAxis 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              label={{ value: `${parametroConfig.nombreCompleto} (${parametroConfig.unidad})`, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#cbd5e1' } }}
-            />
-            <Tooltip content={customTooltip} />
-            <Legend />
-            {metricas.map((metric) => (
+            <CommonAxes />
+            {series.map((s) => (
               <Area
-                key={metric.key}
+                key={s.key}
                 type="monotone"
-                dataKey={metric.key}
-                name={metric.name}
-                stroke={metric.color}
-                fill={metric.color}
-                fillOpacity={0.3}
+                dataKey={s.key}
+                name={s.name}
+                stroke={s.color}
+                fill={s.color}
+                fillOpacity={0.1}
                 strokeWidth={2}
+                connectNulls
               />
             ))}
           </AreaChart>
         );
-      
+
       case 'bar':
         return (
           <BarChart {...commonProps}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-            <XAxis 
-              dataKey="time" 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              angle={-45}
-              textAnchor="end"
-              height={80}
-            />
-            <YAxis 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              label={{ value: `${parametroConfig.nombreCompleto} (${parametroConfig.unidad})`, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#cbd5e1' } }}
-            />
-            <Tooltip content={customTooltip} />
-            <Legend />
-            <Bar 
-              dataKey={parametroConfig.metricaPrincipal} 
-              name={parametroConfig.nombreCompleto} 
-              fill={parametroConfig.color} 
-            />
+            <CommonAxes />
+            {series.map((s) => (
+              <Bar
+                key={s.key}
+                dataKey={s.key}
+                name={s.name}
+                fill={s.color}
+              />
+            ))}
           </BarChart>
         );
-      
+
       case 'composed':
+      case 'line': // Default to line for both 'line' and 'composed'
+      default:
         return (
-          <ComposedChart {...commonProps}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-            <XAxis 
-              dataKey="time" 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              angle={-45}
-              textAnchor="end"
-              height={80}
-            />
-            <YAxis 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              label={{ value: `${parametroConfig.nombreCompleto} (${parametroConfig.unidad})`, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#cbd5e1' } }}
-            />
-            <Tooltip content={customTooltip} />
-            <Legend />
-            <Line 
-              type="monotone" 
-              dataKey={parametroConfig.metricaPrincipal} 
-              name={parametroConfig.nombreCompleto} 
-              stroke={parametroConfig.color} 
-              strokeWidth={3} 
-              dot={{ r: 3 }} 
-            />
-            {metricas.slice(1).map((metric, index) => (
+          <LineChart {...commonProps}>
+            <CommonAxes />
+            {series.map((s, index) => (
+              <Line
+                key={s.key}
+                type="monotone"
+                dataKey={s.key}
+                name={s.name}
+                stroke={s.color}
+                strokeWidth={isMultiStation ? 2 : 3}
+                dot={isMultiStation ? false : { r: 3, fill: s.color }}
+                activeDot={{ r: 6, fill: s.color, stroke: '#fff' }}
+                strokeDasharray={!isMultiStation && index % 2 !== 0 ? '5 5' : '0'}
+                connectNulls
+              />
+            ))}
+            {!isMultiStation && metricas.length > 1 && metricas.slice(1).map((metric, index) => (
               <Line
                 key={metric.key}
                 type="monotone"
@@ -663,44 +712,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
                 name={metric.name}
                 stroke={metric.color}
                 strokeWidth={2}
-                strokeDasharray={index % 2 === 0 ? "5 5" : "0"}
-              />
-            ))}
-          </ComposedChart>
-        );
-      
-      default: // line
-        return (
-          <LineChart {...commonProps}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-            <XAxis 
-              dataKey="time" 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              angle={-45}
-              textAnchor="end"
-              height={80}
-            />
-            <YAxis 
-              tick={{ fontSize: 12, fill: '#cbd5e1' }}
-              axisLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              tickLine={{ stroke: 'rgba(255,255,255,0.2)' }}
-              label={{ value: `${parametroConfig.nombreCompleto} (${parametroConfig.unidad})`, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: '#cbd5e1' } }}
-            />
-            <Tooltip content={customTooltip} />
-            <Legend />
-            {metricas.map((metric, index) => (
-              <Line
-                key={metric.key}
-                type="monotone"
-                dataKey={metric.key}
-                name={metric.name}
-                stroke={metric.color}
-                strokeWidth={metric.key === parametroConfig.metricaPrincipal ? 3 : 2}
-                dot={{ fill: metric.color, strokeWidth: 2, r: metric.key === parametroConfig.metricaPrincipal ? 4 : 3 }}
-                activeDot={{ r: 6, fill: metric.color, strokeWidth: 2, stroke: '#fff' }}
-                strokeDasharray={metric.key !== parametroConfig.metricaPrincipal && index % 2 === 0 ? '5 5' : '0'}
+                strokeDasharray="5 5"
               />
             ))}
           </LineChart>
@@ -972,8 +984,8 @@ export default function ParametroDetalles({ datas, title, parametro }) {
   };
 
   // Fin de estilos
-        
-          return (
+
+  return (
     <div style={styles.container}>
       <style>{`
         @keyframes pulse {
@@ -1090,13 +1102,13 @@ export default function ParametroDetalles({ datas, title, parametro }) {
                     <input
                       type="datetime-local"
                       value={dateRange.start}
-                      onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
+                      onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
                       style={{ ...styles.input, width: 'calc(50% - 6px)' }}
                     />
                     <input
                       type="datetime-local"
                       value={dateRange.end}
-                      onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
+                      onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
                       style={{ ...styles.input, width: 'calc(50% - 6px)' }}
                     />
                   </div>
@@ -1139,13 +1151,13 @@ export default function ParametroDetalles({ datas, title, parametro }) {
                       <input
                         type="number"
                         value={editThresholds?.min ?? getDefaultThresholds(parametro).min}
-                        onChange={(e) => setEditThresholds({...editThresholds, min: Number(e.target.value)})}
+                        onChange={(e) => setEditThresholds({ ...editThresholds, min: Number(e.target.value) })}
                         style={{ ...styles.input, width: '110px' }}
                       />
                       <input
                         type="number"
                         value={editThresholds?.max ?? getDefaultThresholds(parametro).max}
-                        onChange={(e) => setEditThresholds({...editThresholds, max: Number(e.target.value)})}
+                        onChange={(e) => setEditThresholds({ ...editThresholds, max: Number(e.target.value) })}
                         style={{ ...styles.input, width: '110px' }}
                       />
                       <button

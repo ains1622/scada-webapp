@@ -1,6 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
-import { testConexion, getData, getDataFiltered, getAlertThreshold, upsertAlertThreshold, getCentral, getCentralFiltered } from "./src/db.js";
+import { testConexion, getData, getDataFiltered, getAlertThreshold, upsertAlertThreshold, getAllAlerts, getCentral, getDt, getCentralFiltered } from "./src/db.js";
 import cors from "cors";
 import { Server } from "socket.io";
 import http from "http";
@@ -9,6 +9,9 @@ import { runConsumer } from "./src/kafka/consumerClima.js";
 import { initOpalProducer, sendOpalMessage } from './src/OPAL-RT/producerOpal.js';
 import { runOpalConsumer } from './src/OPAL-RT/consumerOpal.js';
 import { runOpalDbConsumer } from './src/OPAL-RT/consumerOpalDb.js';
+import { initDtProducer, sendDtMessage } from './src/DT/producerDt.js';
+import { runDtConsumer } from './src/DT/consumerDt.js';
+import { runDtDbConsumer } from './src/DT/consumerDtDb.js';
 
 dotenv.config();
 
@@ -106,20 +109,20 @@ app.get("/clima", async (req, res) => {
     }
 
     let data = await getDataFiltered({ start: startISO, end: endISO, agg });
-     // Si piden una métrica concreta, devolver objetos reducidos { timestamp, <metric>, station }
-     if (metric && Array.isArray(data)) {
-       data = data.map(row => {
-         // normalizar timestamp si viene con otro nombre
-         const ts = row.timestamp || row.time || row.ts || null;
-         return {
-           timestamp: ts,
-           // si la columna no existe, devolver null para mantener esquema consistente
-           [metric]: row.hasOwnProperty(metric) ? row[metric] : null,
-           station: row.station || null
-         };
-       });
-     }
-     res.json(data);
+    // Si piden una métrica concreta, devolver objetos reducidos { timestamp, <metric>, station }
+    if (metric && Array.isArray(data)) {
+      data = data.map(row => {
+        // normalizar timestamp si viene con otro nombre
+        const ts = row.timestamp || row.time || row.ts || null;
+        return {
+          timestamp: ts,
+          // si la columna no existe, devolver null para mantener esquema consistente
+          [metric]: row.hasOwnProperty(metric) ? row[metric] : null,
+          station: row.station || null
+        };
+      });
+    }
+    res.json(data);
   } catch (error) {
     console.error("Error fetching data:", error);
     res.status(500).json({ error: "Error en la base de datos" });
@@ -145,7 +148,7 @@ app.get('/clima/latest', (req, res) => {
 app.get('/opal', async (req, res) => {
   try {
     const { start, end, agg, limit } = req.query;
-    
+
     let startISO = null;
     let endISO = null;
 
@@ -163,15 +166,15 @@ app.get('/opal', async (req, res) => {
 
     // Si no hay fechas, usamos 'raw' para velocidad, si hay, respetamos la agregación pedida
     const useAgg = (startISO || endISO) ? agg : 'raw';
-    
+
     // Si no hay límite, ponemos uno de seguridad (ej. 100k) para evitar crasheos de memoria
     const finalLimit = limit ? parseInt(limit) : 100000;
 
-    const data = await getCentralFiltered({ 
-      start: startISO, 
-      end: endISO, 
+    const data = await getCentralFiltered({
+      start: startISO,
+      end: endISO,
       agg: useAgg,
-      limit: finalLimit 
+      limit: finalLimit
     });
 
     if (!Array.isArray(data)) {
@@ -185,7 +188,7 @@ app.get('/opal', async (req, res) => {
     for (let i = 0; i < len; i++) {
       const r = data[i];
       const ts = r.timestamp || r.time;
-      
+
       normalized[i] = {
         // Enviamos el timestamp puro (el front lo formatea al mostrar)
         timestamp: ts,
@@ -201,6 +204,64 @@ app.get('/opal', async (req, res) => {
   } catch (err) {
     console.error('Error en GET /opal:', err);
     res.status(500).json({ error: 'Error fetching opal data' });
+  }
+});
+
+// Endpoint para historial DT (Digital Twin)
+app.get('/dt', async (req, res) => {
+  try {
+    const { start, end, agg, limit } = req.query;
+
+    let startISO = null;
+    let endISO = null;
+
+    if (start) {
+      const ds = new Date(start);
+      if (!isNaN(ds)) startISO = ds.toISOString();
+    }
+    if (end) {
+      const de = new Date(end);
+      if (!isNaN(de)) {
+        de.setMilliseconds(de.getMilliseconds() + 999);
+        endISO = de.toISOString();
+      }
+    }
+
+    const useAgg = (startISO || endISO) ? agg : 'raw';
+    const finalLimit = limit ? parseInt(limit) : 100000;
+
+    const data = await getDt({
+      start: startISO,
+      end: endISO,
+      agg: useAgg,
+      limit: finalLimit
+    });
+
+    if (!Array.isArray(data)) {
+      return res.json([]);
+    }
+
+    const len = data.length;
+    const normalized = new Array(len);
+
+    for (let i = 0; i < len; i++) {
+      const r = data[i];
+      const ts = r.timestamp || r.time;
+
+      normalized[i] = {
+        timestamp: ts,
+        voltaje: r.voltaje !== null ? Number(r.voltaje) : null,
+        corriente: r.corriente !== null ? Number(r.corriente) : null,
+        potencia: r.potencia !== null ? Number(r.potencia) : null,
+      };
+    }
+
+    console.log(`GET /dt: rows=${len}, useAgg=${useAgg}`);
+    res.json(normalized);
+
+  } catch (err) {
+    console.error('Error en GET /dt:', err);
+    res.status(500).json({ error: 'Error fetching dt data' });
   }
 });
 
@@ -220,6 +281,17 @@ app.put('/alertas/:param', express.json(), async (req, res) => {
   }
 });
 
+// Obtener todas las alertas configuradas (última versión por parámetro)
+app.get('/alertas', async (req, res) => {
+  try {
+    const alerts = await getAllAlerts();
+    res.json(alerts);
+  } catch (err) {
+    console.error('GET /alertas error', err);
+    res.status(500).json({ error: 'Error al obtener alertas' });
+  }
+});
+
 // Endpoint para recibir paquetes SV desde el bridge UDP->HTTP
 app.post('/api/sv', express.json(), async (req, res) => {
   try {
@@ -235,6 +307,18 @@ app.post('/api/sv', express.json(), async (req, res) => {
   }
 });
 
+// Endpoint para recibir paquetes DT
+app.post('/api/dt', express.json(), async (req, res) => {
+  try {
+    const payload = req.body;
+    await sendDtMessage(payload);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error handling /api/dt payload', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 server.listen(4000, "0.0.0.0", () => {
   console.log(`Servidor corriendo en el puerto 4000`);
 });
@@ -245,14 +329,26 @@ server.listen(4000, "0.0.0.0", () => {
   sendApiDataToKafka();
 })()
 
-// Inicializar productor y consumidores específicos a Opal
-;(async () => {
+  // Inicializar productor y consumidores específicos a Opal
+  ; (async () => {
+    try {
+      await initOpalProducer();
+      await runOpalConsumer(io);
+      await runOpalDbConsumer();
+      console.log('Opal producer and consumers started');
+    } catch (err) {
+      console.error('Error starting Opal producer/consumers:', err);
+    }
+  })();
+
+// Inicializar productor y consumidores específicos a DT
+; (async () => {
   try {
-    await initOpalProducer();
-    await runOpalConsumer(io);
-    await runOpalDbConsumer();
-    console.log('Opal producer and consumers started');
+    await initDtProducer();
+    await runDtConsumer(io);
+    await runDtDbConsumer();
+    console.log('Dt producer and consumers started');
   } catch (err) {
-    console.error('Error starting Opal producer/consumers:', err);
+    console.error('Error starting Dt producer/consumers:', err);
   }
 })();
