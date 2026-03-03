@@ -27,6 +27,7 @@ export default function ParametroDetalles({ datas, title, parametro }) {
       velocidad_viento: { min: 0, max: 50 },
       direccion_viento: { min: 0, max: 360 },
       indice_uv: { min: 0, max: 11 },
+      ghi: { min: 0, max: 1200 },
       temperatura: { min: 10, max: 35 }
     };
     return defaults[param] || defaults.temperatura;
@@ -85,6 +86,14 @@ export default function ParametroDetalles({ datas, title, parametro }) {
         nombreCompleto: 'Índice Ultravioleta',
         rangosNormales: '0-11',
         metricaPrincipal: 'indiceuv',
+      },
+      ghi: {
+        unidad: ' W/m²',
+        color: '#fb923c',
+        icono: Sun,
+        nombreCompleto: 'Irradiancia (GHI)',
+        rangosNormales: '0-1200 W/m²',
+        metricaPrincipal: 'ghi',
       },
       temperatura: {
         unidad: '°C',

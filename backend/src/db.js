@@ -84,7 +84,8 @@ const getDataFiltered = async ({ start, end, agg } = {}) => {
           AVG(presion) AS presion,
           AVG(v_viento) AS v_viento,
           AVG(d_viento) AS d_viento,
-          AVG(indiceuv) AS indiceuv
+          AVG(indiceuv) AS indiceuv,
+          AVG(ghi) AS ghi
           FROM clima
           WHERE 1=1 ${where}
           GROUP BY 1, 2

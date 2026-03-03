@@ -70,7 +70,7 @@ export default function DashboardClima() {
       if (payload?.svID) point.svID = payload.svID;
 
       // Convertir campos climáticos comunes a Number para asegurar que los gráficos los lean
-      const climaKeys = ['temperatura', 'humedad', 'presion', 'v_viento', 'd_viento', 'indiceuv'];
+      const climaKeys = ['temperatura', 'humedad', 'presion', 'v_viento', 'd_viento', 'indiceuv', 'ghi'];
       climaKeys.forEach(k => {
         if (point[k] != null) point[k] = Number(point[k]);
       });
@@ -281,7 +281,8 @@ export default function DashboardClima() {
     { key: "presion", color: "#10b981", label: "Presión", unit: "hPa", icon: "📊", gradient: "linear-gradient(135deg, #10b981, #22c55e)", bgGradient: "linear-gradient(135deg, #ecfdf5, #f0fdf4)" },
     { key: "v_viento", color: "#f59e0b", label: "Vel. Viento", unit: "m/s", icon: "💨", gradient: "linear-gradient(135deg, #f59e0b, #eab308)", bgGradient: "linear-gradient(135deg, #fffbeb, #fefce8)" },
     { key: "d_viento", color: "#6366f1", label: "Dir. Viento", unit: "°", icon: "🧭", gradient: "linear-gradient(135deg, #6366f1, #8b5cf6)", bgGradient: "linear-gradient(135deg, #eef2ff, #faf5ff)" },
-    { key: "indiceuv", color: "#a855f7", label: "Índice UV", unit: "", icon: "☀️", gradient: "linear-gradient(135deg, #a855f7, #ec4899)", bgGradient: "linear-gradient(135deg, #faf5ff, #fdf2f8)" }
+    { key: "indiceuv", color: "#a855f7", label: "Índice UV", unit: "", icon: "☀️", gradient: "linear-gradient(135deg, #a855f7, #ec4899)", bgGradient: "linear-gradient(135deg, #faf5ff, #fdf2f8)" },
+    { key: "ghi", color: "#fb923c", label: "Irradiancia", unit: "W/m²", icon: "☀️", gradient: "linear-gradient(135deg, #fb923c, #f97316)", bgGradient: "linear-gradient(135deg, #fff7ed, #ffedd5)" }
   ];
 
   const getCurrentValue = (key) => {

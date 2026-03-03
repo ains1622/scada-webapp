@@ -50,6 +50,7 @@ const campoMap = {
   "Modbus_1_w_speed": "v_viento",
   "Modbus_1_w_direccion": "d_viento",
   "uv": "indiceuv",
+  "ghi": "ghi",
   "lluvia": "lluvia",
   "poa": "poa",
   "PT100_1_PT_100": "PT100_1_PT_100",

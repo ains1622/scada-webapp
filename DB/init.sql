@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS clima (
     v_viento NUMERIC(5,2),
     d_viento REAL,
     indiceuv REAL,
+    ghi REAL,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     station TEXT
 );
@@ -37,6 +38,7 @@ BEGIN
         'v_viento', NEW.v_viento,
         'd_viento', NEW.d_viento,
         'indiceuv', NEW.indiceuv,
+        'ghi', NEW.ghi,
         'timestamp', NEW.timestamp,
         'station', NEW.station
     );

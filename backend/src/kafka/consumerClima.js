@@ -22,8 +22,8 @@ export const runConsumer = async (io) => {
         try {
           // Insertar estación para poder filtrar por estación en la BD
           const query = `
-            INSERT INTO clima (temperatura, humedad, presion, v_viento, d_viento, indiceuv, timestamp, station)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO clima (temperatura, humedad, presion, v_viento, d_viento, indiceuv, ghi, timestamp, station)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           `;
           const values = [
             data.temperatura,
@@ -32,6 +32,7 @@ export const runConsumer = async (io) => {
             data.v_viento,
             data.d_viento,
             data.indiceuv,
+            data.ghi,
             data.timestamp,
             data.station ?? null,
           ];

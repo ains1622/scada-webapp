@@ -75,6 +75,15 @@ function App() {
               />
             }
           />
+          <Route
+            path="/ghi"
+            element={
+              <ParametroDetalles
+                parametro="ghi"
+                title="Análisis Detallado de Irradiancia (GHI)"
+              />
+            }
+          />
           <Route path="*" element={<ClimaDashboard />} />
         </Routes>
       </Router>
